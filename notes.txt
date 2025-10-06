@@ -1,0 +1,2020 @@
+==============================================================================
+Thu Oct  2 11:21:35 EDT 2025
+==============================================================================
+
+Trying to trace data in dev with kafka config changes to see where they
+might be failing.
+
+Tracing this dev dataset.
+
+{'table': 'ryan_org__testdelnumbers', 'dsid': '13d850a5-c141-4546-9039-b50ea7fe4d3c', 'ingestio_id': 'e0a56af2-65e5-4045-8566-9bbe3bf3c5a0'}
+
+Comparing to this test dataset which is processing today.
+
+    mdot__new_dataset_20250227
+{"table":"mdot__new_dataset_20250227", "dsid":"0106cb7f-8dcd-4655-aa1a-e6de662ee1f9", "ingestion_id": "431d9a35-af0b-474a-9e41-4086d50410e8"}
+
+==============================================================================
+Tue Sep 30 11:14:08 EDT 2025
+==============================================================================
+
+Kafka version running in prod.
+
+3.7.1
+
+Look for a new docker image to replace bitname/kafka:3.1.2
+
+==============================================================================
+Mon Sep 15 06:04:14 PM EDT 2025
+==============================================================================
+
+● The only remaining issue is application-level code in the Flair service:                                                            
+  ArgumentError: map/2 cannot be called after group_by/reduce/emit_and_reduce operation                                               
+  (use on_trigger/2 if you want to further emit events or the accumulated state)                                                      
+      at (flair 1.0.0) lib/flair/durations/flow.ex:33                                                                                 
+                                                                                                                                      
+  This is a Flow (Elixir stream processing) configuration issue, not a container orchestration problem. The error indicates that      
+  Flair.Durations.Flow.ex:33 needs to be updated to use on_trigger/2 instead of map/2 after a group_by operation.
+  
+==============================================================================
+Mon Sep 15 16:48:38 EDT 2025
+==============================================================================
+
+● E2E Integration Test Error Analysis & Fix Plan
+
+  Based on my analysis of the e2e.log file and configuration, here are the key issues and their fixes:
+
+  Critical Issues Identified:
+
+  1. Missing Presto/Trino Service: The primary failure is that Presto/Trino (running on port 8080) is not starting despite being defined in docker-compose.yml
+  2. Estuary Application Failure: The application fails to initialize due to connection errors to Presto
+  3. Container OCI Runtime Issues: Line 14 shows crun runtime unavailability warnings
+
+  Root Cause Analysis:
+
+  The log shows:
+  - Line 317-392: Multiple :econnrefused errors when trying to connect to http://localhost:8080/v1/statement
+  - Line 392: "Error creating event_stream table: {:error, %Prestige.ConnectionError{message: "Error connecting to Presto.", code: :econnrefused}}"
+  - Line 394-400: Estuary.Application fails to start due to "Could not initialize Estuary"
+  - Lines 1270-1331: Shows containers being stopped but no mention of Presto/Trino starting
+
+  Fix Plan (Priority Order):
+
+  1. HIGH PRIORITY - Fix Presto/Trino Service
+
+  - Issue: Presto service defined in docker-compose.yml but not starting
+  - Solution: The presto service exists in docker-compose.yml but appears to have dependency or startup issues
+  - Action Required:
+    - Verify the metastore service is healthy before Presto starts
+    - Check if the Trino image quay.io/urbanos/ubi-trino:468-015 is accessible
+    - Ensure proper healthcheck and startup sequence
+
+  2. MEDIUM PRIORITY - Container Runtime Issues
+
+  - Issue: Line 14 shows "OCI Runtime crun is in use by a container, but is not available"
+  - Solution: Configure proper container runtime or switch to runc if available
+  - Action Required: Update Podman configuration or container runtime settings
+
+  3. MEDIUM PRIORITY - Application Dependencies
+
+  - Issue: Several applications (Estuary, Forklift, Valkyrie, Reaper) fail due to Presto unavailability
+  - Solution: These should recover once Presto is available, but may need startup order fixes
+  - Action Required: Ensure proper dependency chains and health checks
+
+  4. LOW PRIORITY - Environment Variables
+
+  - Issue: Missing environment variables like AUTH0_CLIENT_SECRET, CUSTOM_FAV_ICON_URL
+  - Solution: These are warnings and don't cause test failures
+  - Action Required: Set proper environment variables for cleaner logs
+
+  5. LOW PRIORITY - Node.js Assets
+
+  - Issue: Lines 122-123 show webpack script missing for Andi
+  - Solution: Run npm install in assets directory
+  - Action Required: Ensure proper asset compilation for UI applications
+
+  Immediate Action Items:
+
+  1. Fix the Presto service startup - This is the blocker causing all tests to fail
+  2. Verify metastore connectivity - Presto depends on the metastore service
+  3. Check container runtime configuration - Address the crun warnings
+  4. Validate service health checks - Ensure proper startup sequencing
+
+  The core issue is that the E2E test setup expects a fully functional Presto/Trino instance for data querying, but the service isn't starting properly, causing a cascade of failures throughout the system.
+
+==============================================================================
+Mon Sep  8 23:12:41 EDT 2025
+==============================================================================
+
+● E2E Test Error Analysis and Solutions:
+
+  Critical Issues Found:
+
+  1. Missing Setup Script (Lines 19-22, 49-55)
+  Error: crun: executable file `/workdir/setup.sh` not found in $PATH: No such file or directory
+  - The Docker init container expects /workdir/setup.sh but it's missing
+  - Solution: Create the setup.sh file or fix the volume mount path
+
+  2. Brook.Supervisor :pg Process Conflict (Lines 144-148)
+  Application andi exited: shutdown: failed to start child: Brook.Supervisor
+  ** (EXIT) already started: #PID<0.3190.0>
+  - Multiple applications trying to start the same :pg process
+  - Solution: Ensure proper process isolation or sequential startup
+
+  3. Bypass.Supervisor Process Not Available (Lines 874-881)
+  ** (EXIT) no process: the process is not alive or there's no process currently associated with the given name
+  - The Bypass library (used for HTTP mocking in tests) isn't starting properly
+  - Solution: Ensure Bypass application is started before tests
+
+  4. Missing System Dependencies (Lines 123-130)
+  `inotify-tools` is needed to run `file_system` for your system
+  Not able to start file_system worker
+  Could not start Phoenix live-reload
+  - Missing inotify-tools for file system monitoring
+  - Solution: Install inotify-tools package
+
+  5. Missing Node.js Dependencies (Lines 140-141)
+  Could not start Node.js watcher because script "webpack.js" does not exist
+  You may fix this by running "npm install" inside the "assets" directory
+  - Missing webpack and Node.js dependencies
+  - Solution: Run npm install in assets directories
+
+  Recommended Solutions:
+
+  1. Check and create setup.sh: apps/e2e/test/setup.sh:1
+  2. Fix application startup order in test configuration
+  3. Ensure Bypass application starts before E2E test setup
+  4. Install system dependencies: inotify-tools
+  5. Install Node.js dependencies in assets folders
+
+  The tests are failing at the setup phase, so none of the actual E2E tests ran. Fix these infrastructure issues first.
+
+==============================================================================
+Fri Sep  5 03:15:15 PM EDT 2025
+==============================================================================
+
+Possible solution to mock the health check status for faking out divo out on odin.
+
+podman inspect c5188185e3b7 | jq '.[] | .State.Health.Status = "mocked_status"'  | batcat
+
+==============================================================================
+Mon Aug 18 12:03:44 EDT 2025
+==============================================================================
+
+Auth0
+
+It appears we have three auth0 tenants.
+
+I am able to login and manage the mdot-dev tenant.
+
+However I do not appear to have access to test and prod tenant access.
+
+Came to this conclusion by examing the openshift-deploy andi_auth0_client_id values.
+
+Dev has the client_id corresponing to mdot-dev.andi.client_id. However qa and prod have two distinct values not in dev.
+Ergo this indicates there is likely two tenants for which I don't have access to.
+
+==============================================================================
+Wed Aug  6 10:16:50 EDT 2025
+==============================================================================
+
+Trying to eliminate the number of events occurring in dev and test. To reduce the pressure on ETCD of the nonprod cluster.
+
+==============================================================================
+Fri Jul 11 11:05:01 EDT 2025
+==============================================================================
+
+OTP23 -> OTP25 Migration
+
+Started with Elixir 14. However the dep :nimble_csv 1.3.0 seemed to indicate the project
+needed to be pulled forward. nimble_csv was producing a compile failure for an
+Elixir feature not present until Elixir 1.15. Reaper seems to pull in :nimble_csv
+
+I see floki also want Elixir 1.15.
+
+Per Gemini's advice I started to bring in Elixir 1.15. I modified .tool-versions and ran
+some asdf stuff, yada, yada.
+
+However I didn't get very far. Within the first 15 minutes I hit this snag. :natural_sort dep
+seems to be an abandoned project. Last updated: circa 2016 according to gemini. The dep won't
+compile because its mix.exs is relying on an outdated Elixir feature which inferred if a reference
+was to a variable or arity/0 function. It's mix.exs file omits the "()" on it's reference to deps. It
+intends to call it's deps function, so forking the project and adding the parens might get
+a Elixir 15 migration back on track.
+
+However at the current time, I think I will stick with Elixir 1.14 and try to sort out the nimble_csv
+mess to see if I can get around that unfortunate problem.
+
+==============================================================================
+Tue Jul  8 15:43:20 EDT 2025
+==============================================================================
+
+The original design of the RIDE system is based on receiving "datasets"
+from data sources. The "datasets" are then written as Kafka messages to the
+cluster. Various RIDE components process the content of the "datasets" in
+various ways and pass the "dataset" onto other components for further processing.
+
+Most of the RIDE datasets are small a fraction of a MB. However the newest work_zone
+"dataset" that is using RIDE is currently 1.4 MB in size. This is a problem in that the default Kafka message size limit is 1 MB. Currently when we try to process this "dataset" Reaper receives a "message too large" error from the Kafka broker library.
+
+Per this URL: https://www.confluent.io/learn/kafka-message-size-limit/
+
+It is recommended to keep Kafka messages small. In fact the Kafka developers recommend a "check and store" strategy. "Check and store" strategy means receive the (large) data and store it into a database or similar. Then place an ID or URL around in the Kafka messages to reference the data to be processed as a result of the message.
+
+From a practical stand point. Increasing the Kafka message size would be the easiest way to accomodate the new work_zone "dataset". However this goes against the best practices as described by the Kafka community. I think the "check and store" strategy is good one as it would allow for virtually arbitary large "datasets" in the future. However significant changes will need to be made to the RIDE app to adopt that strategy.
+So the basic questions on this topic are:
+
+1) Should we increase the Kafka message size or should we begin to implement the "check and store" strategy?
+2) How do we increase the message size limit? I have tested increasing the Kafka message limit on a minikube strimzi Kafka instance at home. And it seems straightforward in my experience there.
+
+Any insight you can provide on this topic will be appreciated.
+
+
+==============================================================================
+Tue Jul  8 11:06:33 EDT 2025
+==============================================================================
+
+Hitchhikers Guide to RIDE at SOM
+
+- https://github.com/orgs/UrbanOS-Public/
+- https://github.com/UrbanOS-Public/smartcitiesdata
+- https://github.com/UrbanOS-Public/openshift-deploy
+- https://github.com/UrbanOS-Public/som_ride_support
+- https://github.com/UrbanOS-Public/smartcitiesdata/wiki/
+
+Internal SOM RIDE Resources
+- https://stateofmichigan.sharepoint.com/:x:/r/sites/DTMB-SPT-AS-MDOT-ITS/Shared%20Documents/RIDE/ride-tasks.xlsx?d=wc0d8d8f1297946279f164526023405e1&csf=1&web=1&e=GPyzXl
+- https://stateofmichigan.sharepoint.com/:f:/r/sites/DTMB-SPT-AS-MDOT-ITS/Shared%20Documents/RIDE?csf=1&web=1&e=TTOTIX
+- TODO: Find a link to the systems diagram featuring RIDE.
+
+OpenShift Environments
+
+RIDE. ocprod :      mdot-ride-prod-ns
+      ocnonprod :  mdot-ride-dev-ns, mdot-ride-test-ns
+
+OpenShift Team:
+- Aaron Chiles
+- Erik Chiles
+- Nick Casale
+
+==============================================================================
+Wed Jul  2 16:31:49 EDT 2025
+==============================================================================
+
+Laptop melted down on June 30th. But I was able to run the following work_zone
+test while the laptop was being repaired.
+
+Took a copy of the 1.4M work zone file and paired it down to about half the
+"features" entries. The resulting file was about 700K. The original file I will
+refer to as WZ1M and the paired down version I will refer to as WZ700K.
+
+I recreated a Work Zone dataset / ingestion work flow on dev. I first pointed
+the dev Work Zone ingestion at WZ700K. The ingestion and dataset worked as
+expected for an hour or more. However when I changed the ingestion to pull the
+WZ1M data file the Dev system started to fail in the same way as production
+does.
+
+I see this error in reaper as it pulls the data and then tries to create the
+kafka message.
+
+Last message: {:EXIT, #PID<0.72.151>, {%RuntimeError{message: "Stage failed reason: {{:badmatch, {:error, \"0 messages succeeded before elsa producer failed midway through due to {:producer_down, {:not_retriable, {:produce_response_error, \\\"raw-bccbacd3-ca2b-451d-9df9-7675c296bc49\\\", 0, -1, :message_too_large}}}\"
+
+I will investigate changing the kafka message limit on dev to observe if that is
+sufficient to fix this problem.
+
+
+WZ700K: https://gist.githubusercontent.com/rseward/c8251775e1d2fe6326cd3e55da293be8/raw/3deef52fa5321047d752241b6bbdbc2f81c6b63f/gistfile1.txt
+WZ1M:   https://gist.githubusercontent.com/rseward/b40e004a183772f13c9e5297899ad24d/raw/d15d77bf2fcf5b18264410be9f8fc618b93f7e3f/gistfile1.txt
+
+==============================================================================
+Fri Jun 27 16:55:05 EDT 2025
+==============================================================================
+
+http://www.bluestone-consulting.com/urbanos/work_zone-20250626.json
+
+==============================================================================
+Thu Jun 26 14:15:15 EDT 2025
+==============================================================================
+
+Working on work zone ingestion problem.
+
+Reaper shows message_too_large
+
+curl --location --ssl-reqd --request GET "https://mobility.terraformmanager.net/api/v1/mobility/WorkZoneDataExchange/v40/RoadEventFeed/State?state=MI" --header "Authorization:Basic bWRvdF93emR4OldaRFhXb3JrQ29uZURhdGFFeGNoYW5nZSU1NjQ3ODkyMWhnIQ=="
+
+Proposal:
+
+Joe. The standard recommendation for large kafka message sizes seems to be don't do it! The kafka community instead recommends "check and store" approach. E.g. save the dataset into a data store. I am thinking RIDE's redis component might be a good candidate for this. And then place a URL/pointer to the data location around as a kafka message. This all sounds like the correct approach to the problem. Redoing the urbanos architecture to behave this way will take some time. I am a little surprise this issue wasn't discovered or designed into the system when it was used at Columbus.
+ 
+My main point to the above message is to gauge how important is it to resolve this issue quickly? If it is not super critical I would like to bounce the change off our new Sateesh replacement as he is suppose to be a bit of a Kafka expert. If he concurs with my assessment, I am thinking we should attempt to solve the problem with this approach.
+ 
+All the other solutions I can think of compressing datasets and increasing the message size would just defer the fundamental problem to a later date.
+ 
+When you have a moment please share your thoughts.
+ 
+Also I added monitoring for this dataset so we can identify in the future when it isn't updating. I thought I had done a complete inventory of important datasets, but I guess I missed this one in April.
+
+Joe told me it is:
+
+"It's relatively important that we get it resolved, but if there is a lead time for RIDE, we might be able to publish it via the Mi Drive endpoint or something like that. We'd need to chat with Dave. I also thought they would have tested this and I'm pretty sure we specified the datasets were up to 10MB"
+
+I am currently trying to replicate the problem on the RIDE dev system to
+confirm the problem is with the data set size. I will update as I progress.
+
+There might be other limits I am not thinking of down the line. But I think 10MB+ would be possible after the proposed changes.
+
+
+==============================================================================
+Wed Jun  4 17:42:27 EDT 2025
+==============================================================================
+
+dead_letter queue seems to be an interesting OTP25 unit test case failure.
+
+placebo fails because it is passing an inappropriate list to Enum.reverse()
+which throws an exception. Investigate if a different version of placebo
+would improve the situation or if placebo could be replaced?
+
+==============================================================================
+Tue May 27 17:49:03 EDT 2025
+==============================================================================
+
+Wading through the SSL debacle that prevents data from being ingested. These
+are possible solutions for pathing RIDE to ignore SSL Cert problems.
+
+Application.get_all_env( :tesla )
+[recv_timeout: 120000, adapter: Tesla.Adapter.Hackney]
+
+# Patch the config on the fly. Per Gemini this should be the correct way to do it.
+
+hackney -> ANDI's http driver for testing ingestion URLs.
+mint    -> Reaper's http driver for slurping ingestion URLs.
+
+Application.put_env( :tesla, :adapter, {Tesla.Adapter.Hackney, ssl_options: [ verify: :verify_none ]}, recv_timeout: 120_000 )
+
+# TODO, write a similar statement to patch reaper's mint driver.
+
+===============================================
+Mon May 19 03:46:07 PM EDT 2025
+==============================================================================
+
+Looking to apply my new understanding of elixir clustering to resolve this
+OTP25 unit test failure.
+
+* (Mix) Could not start application forklift: Forklift.Application.start(:normal, []) returned an error: shutdown: failed to start child: Brook.Supervisor
+    ** (EXIT) shutdown: failed to start child: Brook.Server
+        ** (EXIT) an exception was raised:
+            ** (MatchError) no match of right hand side value: {:error, {:already_started, #PID<0.978.0>}}
+                (brook_stream 1.0.0) lib/brook/dispatcher.ex:36: Brook.Dispatcher.Default.init/1
+                (brook_stream 1.0.0) lib/brook/server.ex:26: Brook.Server.init/1
+                (stdlib 4.3.1) gen_server.erl:851: :gen_server.init_it/2
+                (stdlib 4.3.1) gen_server.erl:814: :gen_server.init_it/6
+                (stdlib 4.3.1) proc_lib.erl:240: :proc_lib.init_p_do_apply/3
+
+
+
+==============================================================================
+Wed May 14 17:07:59 EDT 2025
+==============================================================================
+
+Like Odysius, I am lost at sea. I am working through various issues to migrate
+from OTP 23 -> OTP 25.
+
+Here are release notes for OTP 24. I am hopeful they might shed some light
+on the perilious course before us.
+
+## OTP 24
+
+- https://github.com/erlang/otp/releases?page=17
+- https://erlang.org/download/OTP-24.0.README
+
+## OTP 25
+
+- https://erlang.org/download/OTP-25.0.README
+
+This directive might be of benefit for migrating the code?
+
+prevent_overlapping_partitions
+
+==============================================================================
+Wed May 14 01:42:2
+2 PM EDT 2025
+==============================================================================
+
+working on init_args:
+Passing unit test prints this for the config dict:
+Dead Letter Config: %{init_args: [size: 3000], module: DeadLetter.Carrier.Test}
+
+
+==============================================================================
+Tue May 13 01:53:10 PM EDT 2025
+==============================================================================
+
+1) test process/2 message is an unparseable binary (DeadLetterTest)
+     test/unit/dead_letter_test.exs:52
+     ** (KeyError) key :original_message not found in: {:error, {:unknown_call, :receive}}. If you are using the dot syntax, such as map.field, make sure the left-hand side of the dot is a map
+     code: assert_async do
+     stacktrace:
+       test/unit/dead_letter_test.exs:61: anonymous fn/0 in DeadLetterTest."test process/2 message is an unparseable binary"/1
+       (assertions 0.21.0) lib/assertions.ex:989: Assertions.assert_async/5
+       test/unit/dead_letter_test.exs:57: (test)
+
+     The following output was logged:
+     17:51:29.690 [info] Enqueueing dead letter: %{app: "forklift", dataset_ids: ["ds1", "ds2"], error: nil, exit_code: nil, ingestion_id: "in1", original_message: "<<80, 75, 3, 4, 20, 0, 6, 0, 8, 0, 0, 0, 33, 0, 235, 122, 210>>", reason: nil,
+     stacktrace: "    (elixir 1.14.4) lib/process.ex:773: Process.info/2\n
+     (dead_letter 2.0.0) lib/dead_letter/server.ex:73: DeadLetter.Server.format_message/5\n
+     (dead_letter 2.0.0) lib/dead_letter/server.ex:49: DeadLetter.Server.process/5\n
+     test/unit/dead_letter_test.exs:55: DeadLetterTest.\"test process/2 message is an unparseable binary\"/1\n
+     (ex_unit 1.14.4) lib/ex_unit/runner.ex:512: ExUnit.Runner.exec_test/1\n
+     (stdlib 4.3.1) timer.erl:235: :timer.tc/1\n
+     (ex_unit 1.14.4) lib/ex_unit/runner.ex:463: anonymous fn/4 in ExUniyt.Runner.spawn_test_monitor/4\n
+     ", timestamp: ~U[2025-05-13 17:51:29.669249Z]}
+    
+
+==============================================================================
+Tue May  6 10:38:38 AM EDT 2025
+==============================================================================
+
+Ian ad
+d ingestion_complete to smart_city
+
+Reverting from Goodwin's selection of :smart_city 6.0.0 -> 5.4.7
+  {:smart_city, "~> 5.4.0"}
+  {:smart_city_test, "~> 5.4.0"}
+
+apps/pipeline/mix.exs
+46:      {:smart_city, "~> 6.0"},
+47:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/estuary/mix.exs
+51:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/forklift/mix.exs
+54:      {:smart_city, "~> 6.0"},
+55:      {:smart_city_test, "~> 3.0"},
+
+apps/reaper/mix.exs
+96:      {:smart_city, "~> 6.0"},
+97:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/pipeline/test/integration/pipeline/reader/topic_reader_test.exs
+72:      Application.put_env(:smart_city_test, :endpoint, @brokers)
+
+apps/performance/mix.exs
+27:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/discovery_streams/mix.exs
+68:      {:smart_city, "~> 6.0"},
+69:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/reaper/lib/reaper/data_extract/load_stage.ex
+132:      {:error, reason} -> {:error, {:smart_city_data, reason}}
+
+apps/alchemist/mix.exs
+58:      {:smart_city, "~> 6.0.0"},
+59:      {:smart_city_test, "~> 3.0.0", only: [:test, :integration]},
+
+apps/raptor/mix.exs
+42:      {:smart_city, "~> 6.0"},
+43:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/transformers/mix.exs
+35:      {:smart_city, "~> 6.0"},
+36:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/andi/mix.exs
+91:      {:smart_city, "~> 6.0"},
+92:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/flair/mix.exs
+49:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/template/mix.exs
+40:      {:smart_city, "~> 6.0"},
+41:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/discovery_api/mix.exs
+80:      {:smart_city, "~> 6.0"},
+81:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+apps/flair/config/integration.exs
+40:config :smart_city_test,
+
+apps/e2e/mix.exs
+40:      {:smart_city, "~> 6.0"},
+
+apps/valkyrie/mix.exs
+58:      {:smart_city, "~> 6.0"},
+59:      {:smart_city_test, "~> 3.0", only: [:test, :integration]},
+
+
+==============================================================================
+Fri May  2 03:56:51 PM EDT 2025
+==============================================================================
+
+Attempt to merge Goodwin's work from 2023
+
+<284 odin /home/rseward/src/github/smartcitiesdata>git pull origin elixir-version-upgrade 
+From github.com:UrbanOS-Public/smartcitiesdata
+ * branch              elixir-version-upgrade -> FETCH_HEAD
+Auto-merging Dockerfile
+Auto-merging apps/alchemist/Dockerfile
+CONFLICT (content): Merge conflict in apps/alchemist/Dockerfile
+Auto-merging apps/alchemist/config/config.exs
+Auto-merging apps/alchemist/config/dev.exs
+Auto-merging apps/alchemist/config/prod.exs
+Auto-merging apps/alchemist/mix.exs
+CONFLICT (content): Merge conflict in apps/alchemist/mix.exs
+Auto-merging apps/alchemist/test/integration/event/event_handler_test.exs
+Auto-merging apps/alchemist/test/unit/alchemist/broadway_test.exs
+CONFLICT (content): Merge conflict in apps/alchemist/test/unit/alchemist/broadway_test.exs
+Auto-merging apps/andi/config/integration.exs
+Auto-merging apps/andi/config/prod.exs
+Auto-merging apps/andi/mix.exs
+CONFLICT (content): Merge conflict in apps/andi/mix.exs
+Auto-merging apps/andi/test/integration/andi/event/event_handler_test.exs
+Auto-merging apps/andi/test/integration/andi_web/controllers/reports_controller_test.exs
+CONFLICT (content): Merge conflict in apps/andi/test/integration/andi_web/controllers/reports_controller_test.exs
+Auto-merging apps/andi/test/integration/andi_web/live/dataset_live_view/dataset_live_view_test.exs
+Auto-merging apps/andi/test/integration/andi_web/live/dataset_live_view/edit_live_view_test.exs
+Auto-merging apps/andi/test/integration/andi_web/live/ingestion_live_view/edit_ingestion_live_view_test.exs
+CONFLICT (content): Merge conflict in apps/andi/test/integration/andi_web/live/ingestion_live_view/edit_ingestion_live_view_test.exs
+
+Auto-merging apps/andi/test/integration/andi_web/live/ingestion_live_view/transformations/transformations_form_test.exs
+Auto-merging apps/andi/test/unit/andi/event/event_handler_test.exs
+CONFLICT (content): Merge conflict in apps/andi/test/unit/andi/event/event_handler_test.exs
+Auto-merging apps/andi/test/unit/andi/input_schemas/ingestion_test.exs
+Auto-merging apps/andi/test/unit/andi_web/live/dataset_live_view/table_test.exs
+Auto-merging apps/discovery_api/config/config.exs
+Auto-merging apps/discovery_api/config/dev.exs
+Auto-merging apps/discovery_api/config/integration.exs
+Auto-merging apps/discovery_api/config/prod.exs
+Auto-merging apps/discovery_api/config/test.exs
+Auto-merging apps/discovery_api/mix.exs
+CONFLICT (content): Merge conflict in apps/discovery_api/mix.exs
+Auto-merging apps/discovery_streams/mix.exs
+CONFLICT (content): Merge conflict in apps/discovery_streams/mix.exs
+Auto-merging apps/e2e/mix.exs
+CONFLICT (content): Merge conflict in apps/e2e/mix.exs
+Auto-merging apps/forklift/config/config.exs
+Auto-merging apps/forklift/config/dev.exs
+Auto-merging apps/forklift/config/integration.exs
+Auto-merging apps/forklift/config/prod.exs
+Auto-merging apps/forklift/mix.exs
+CONFLICT (content): Merge conflict in apps/forklift/mix.exs
+
+Auto-merging apps/pipeline/mix.exs
+CONFLICT (content): Merge conflict in apps/pipeline/mix.exs
+Auto-merging apps/raptor/config/config.exs
+Auto-merging apps/raptor/config/integration.exs
+Auto-merging apps/raptor/mix.exs
+CONFLICT (content): Merge conflict in apps/raptor/mix.exs
+Auto-merging apps/reaper/config/config.exs
+Auto-merging apps/reaper/config/dev.exs
+Auto-merging apps/reaper/config/prod.exs
+Auto-merging apps/reaper/mix.exs
+CONFLICT (content): Merge conflict in apps/reaper/mix.exs
+Auto-merging apps/transformers/mix.exs
+CONFLICT (content): Merge conflict in apps/transformers/mix.exs
+Auto-merging apps/valkyrie/config/config.exs
+Auto-merging apps/valkyrie/config/dev.exs
+Auto-merging apps/valkyrie/config/integration.exs
+Auto-merging apps/valkyrie/config/prod.exs
+Auto-merging apps/valkyrie/config/test.exs
+Auto-merging apps/valkyrie/mix.exs
+CONFLICT (content): Merge conflict in apps/valkyrie/mix.exs
+Auto-merging mix.lock
+CONFLICT (content): Merge conflict in mix.lock
+Automatic merge failed; fix conflicts and then commit the result.
+
+==============================================================================
+Fri May  2 10:56:32 EDT 2025
+==============================================================================
+
+Looking into Accenture's efforts to bring elixir up to date.
+
+jfolk2015 submitted an elixir-1.13 branch which might bring us closer to
+an ubuntu-22.04 goal.
+
+nicholas-goodwin -> elixir-version-upgrade
+  elixir -> 1.14.4
+  erlang -> 25.3.2
+  
+==============================================================================
+Thu Aug 28 15:59:37 EDT 2025
+==============================================================================
+
+Chasing down a problem with vault in test.
+
+pod-0 was restarted. Nag and I unsealed it, but we are still having problems
+fetching and storing secrets.
+
+When saving secrets from ingestions, from ANDI and reaper we consistently see errors. 
+
+For example:
+
+Last message: {:EXIT, #PID<0.22264.4>, {%RuntimeError{message: "Unable to process secret step for ingestion 562f2095-4e00-401f-b65d-cb7a4579e95c."}, [{Reaper.DataExtract.ExtractStep, :process_extract_step, 2, [file: 'lib/reaper/data_extract/extract_step.ex', line: 73]}, {Reaper.DataExtract.ExtractStep, :execute_extract_step, 3, [file: 'lib/reaper/data_extract/extract_step.ex', line: 20]}, {Enum, :"-reduce/3-lists^foldl/2-0-", 3, [file: 'lib/enum.ex', line: 2111]}, {Reaper.DataExtract.Processor, :create_producer_stage, 1, [file: 'lib/reaper/data_extract/processor.ex', line: 91]}, {Reaper.DataExtract.Processor, :process, 2, [file: 'lib/reaper/data_extract/processor.ex', line: 56]}, {Reaper.RunTask, :handle_continue, 2, [file: 'lib/reaper/run_task.ex', line: 21]}, {:gen_server, :try_dispatch, 4, [file: 'gen_server.erl', line: 689]}, {:gen_server, :loop, 7, [file: 'gen_server.erl', line: 431]}]}}
+
+The following vault command from within the pod is useful for testing the vault.
+
+vault list /secrets/smart_city/ingestion/
+vault read /secrets/smart_city/ingestion/e6d252f6-fc71-4623-9d60-da3d6668ff5b___foo
+
+The suppostion is the successful execution of those commands should indicate a
+working / unsealed / opened vault.
+
+
+==============================================================================
+Thu May  1 14:27:05 EDT 2025
+==============================================================================
+
+Using distrobox to run urbanos
+
+# Prep work
+- apt-get bat zoxide -y
+- apt-get install podman podman-compose -y
+- apt-get install distrobox flatpak -y
+
+# Container
+- Create a distrobox container for the version of ubuntu you are targeting
+- apt-get install build-essential git curl -y
+- Install homebrew
+- Install asdf (maybe use brew for this?)
+- Install erlang
+- Install elixir
+
+==============================================================================
+Fri Apr 25 16:32:08 EDT 2025
+==============================================================================
+
+Plan for updating forklift image with new data_writer.exs code.
+
+1) Pull quay.io/urbanos/forklift 0.19.29
+2) Look inside image verify old version of data_writer.exs
+3) git commit new data_writer.exs to master/main branch
+4) Create PR
+5) Review and Accept PR
+6) Trigger github.com/Urbanos-Public/smartcitiesdata/ forklift Action manually
+6) trigger a rebuild of the forklift image
+7) Fashion a new release around the new image with improved data_writer.exs
+8) Prep for test deploy.
+
+==============================================================================
+Thu Apr 24 15:48:37 EDT 2025
+==============================================================================
+
+Contemplating tuning redis.
+
+- Increase mem and cpu
+- Increase readiness and liveness timeout vals
+
+Found these instructions written by Ian in 20240707 deployment.
+
+## Change #13:
+### Description:
+  - Update Redis to version the latest helm chart version to resolve vulnerabilities. The dev environment is currently on 19.1.0.
+Categories:
+  - CVE resolution
+### Deployment:
+  - Run "helm list -n mdot-ride-dev-ns" to check the currently installed redis chart and make a note of it
+  - Run either “helm repo add bitnami https://charts.bitnami.com/bitnami” to add the redis helm repo or "helm repo update bitnami" if the repo has already been added to make sure the most recent redis chart is available.
+  - Get a copy of the redis_values.yml file. The redis_values.yml file is in the openshift-deploy repository at openshift-deploy/urban_os_deps/redis/redis_values.yml
+  - Run "helm upgrade redis bitnami/redis -n mdot-ride-dev-ns -f redis_values.yml --dry-run=server" to do a dry run including attempting to connect to the cluster. If there are any errors or warnings disregard the remaining steps and let us know.
+  - If the above command succeeds, run "helm upgrade redis bitnami/redis -n mdot-ride-dev-ns -f redis_values.yml". This should perform the upgrade.
+  - Run "helm list -n mdot-ride-dev-ns" again to check the new version of the chart
+
+helm list -n mdot-ride-dev-ns
+NAME            NAMESPACE               REVISION        UPDATED                                 STATUS          CHART                           APP VERSION
+redis           mdot-ride-dev-ns        10              2024-08-29 19:19:16.567295712 +0000 UTC deployed        redis-20.0.3                    7.4.0
+ride            mdot-ride-dev-ns        319             2025-02-10 11:39:14.863399288 -0500 EST deployed        urban-os-1.13.66                1.0
+ride-postgres   mdot-ride-dev-ns        14              2025-01-23 12:45:53.943852529 -0500 EST deployed        postgresql-15.5.38              16.4.0
+tenant          mdot-ride-dev-ns        1               2022-08-08 15:15:30.204001 -0400 EDT    deployed        minio_tenant_chart-0.1.0        1.16.0
+vault           mdot-ride-dev-ns        8               2025-01-30 21:08:18.657383636 +0000 UTC failed          vault-0.29.1                    1.18.1
+
+Modifyng redis resource section here:
+
+openshift-deploy/urban_os_deps/redis/redis_values.yml
+
+
+==============================================================================
+Wed Apr 23 11:15:24 EDT 2025
+==============================================================================
+
+Audit of Parking Static Changes.
+
+Please summarize these notes on dataset transformation rules. Highlight the most
+interesting numbers. Interpret 202311200951 as Nov. 20th 2023 9:51 AM
+
+# 202311200951     -> 202311200958
+Cadence:
+"0 * */1 * * *"     "0 0 */1 * * *"
+
+# 202504040405 My Change to acquiesce the RIDE system.
+
+"0 0 */1 * 1 *"
+
+First definition of Null 8 Mile transform.
+
+        {
+            "id": "989990cb-dd2a-467d-88e8-5b6c7b92c56a",
+            "name": "Null 8 Mile",
+            "type": "constant",
+            "sequence": 10,
+            "parameters": {
+                "newValue": "null",
+                "condition": "true",
+                "valueType": "null / empty",
+                "targetField": "capacity",
+                "conditionDataType": "String",
+                "conditionCompareTo": "Static Value",
+                "conditionOperation": "Is Equal To",
+                "sourceConditionField": "nativeDeviceId",
+                "targetConditionValue": "MI00023US005300NSEIGHTMPR"
+            }
+        }
+
+
+# 202504080822
+
+Removed "null 8 mile name" transform.
+
+# 202504080829
+
+Re-added "Null 8 Mile Name" transform.
+
+# 202504080829 -> 202504090417
+
+Cadence:
+
+"0 */5 * * * *" -> "0 */10 * * * *"
+
+# 202504090933
+
+Null 8 Mile Name: source field: siteID -> nativeDeviceId
+
+# 20250409100111
+
+Null 8 Mile Name: target field: name -> location
+
+Cadence: "0 */10 * * * *" -> "0 */5 * * * *"
+
+# 202504100128
+
+Null 8 Mile Name: source field: nativeDeviceId -> siteId
+
+# 202504100156
+
+Null 8 Mile loc: source field: siteId -> nativeDeviceId 
+
+# 202504100158
+
+First intro of the transform: "8 mile null name"
+
+Null 8 Mile loc: source field: nativeDeviceId -> deviceId
+
+# 202504100207
+
+Several changes to 8 Mile field transforms
+
+==============================================================================
+Wed Apr 16 14:07:51 EDT 2025
+==============================================================================
+
+https://gist.githubusercontent.com/som-sewardr1/661447f3b642a2ec7611b400581fc957/raw/fc629ee7944783485dfab0d6bf276ef406bec45a/atms-parking.json
+
+==============================================================================
+Tue Apr  8 13:33:03 EDT 2025
+==============================================================================
+
+This dataset is accumulating lag in it's validated queue.
+
+ Last message: {:EXIT, #PID<0.23655.185>, {%FunctionClauseError{args: nil, arity: 2, clauses: nil, function: :parse, kind: nil, module: Integer}, [{Integer, :parse, [nil, 10], [file: 'l 
+│ 17:30:48.105 [error] GenServer #PID<0.23655.185> terminating
+│ ** (FunctionClauseError) no function clause matching in Integer.parse/2
+│     (elixir 1.10.4) lib/integer.ex:232: Integer.parse(nil, 10)
+│     (forklift 0.19.28) lib/forklift/data_writer.ex:233: Forklift.DataWriter.create_ingestion_complete_data/4
+│     (forklift 0.19.28) lib/forklift/data_writer.ex:135: Forklift.DataWriter.write_to_table/4
+│     (forklift 0.19.28) lib/forklift/data_writer.ex:100: anonymous fn/4 in Forklift.DataWriter.do_write/4
+│     (elixir 1.10.4) lib/enum.ex:3686: Enumerable.List.reduce/3
+│     (elixir 1.10.4) lib/stream.ex:931: Stream.do_list_transform/7
+│     (elixir 1.10.4) lib/enum.ex:2161: Enum.reduce_while/3
+│     (forklift 0.19.28) lib/forklift/data_writer.ex:99: Forklift.DataWriter.do_write/4
+│ Last message: {#PID<0.24971.185>, {:kafka_message_set, "validated-c62371cd-662a-43f5-b03f-94046c44acc8", 0, 1514159, [{:kafka_message, 1514130, 
+
+==============================================================================
+Mon Apr  7 22:03:33 EDT 2025
+==============================================================================
+
+Trying to write a utility to estimate the "lag" in the queues.
+
+I found these groups specified in pipeline/lib/reader/topic_reader.ex
+
+        group: "#{config.instance}-#{config.topic}",
+
+    :"#{instance}-#{producer_name}"
+
+## reaper.var.sys.config
+
+brook->group = event-stream::reaper-event-stream
+
+## alchemist.var.sys.config
+
+brook->group = event-stream::alchemist-events
+
+## valkyrie.var.sys.config
+
+brook->group = event-stream::valkyrie-events
+
+## forklift.var.sys.config
+
+brook->instance = forklift
+brook->group = event-stream::forklift-events
+
+
+# Actual groups being used on prod.
+
+bash-5.1$ ./bin/kafka-consumer-groups.sh --bootstrap-server 127.0.0.1:9092 --list
+alchemist-raw-b617fde5-8ec8-49e4-8be4-1576aa300242
+forklift-validated-c3c7bfca-f56f-4f24-9b1d-48f43992164c
+alchemist-events
+alchemist-raw-3608a4e2-3e55-4e75-b74e-1728c2d43e32
+valkyrie-transformed-12a42428-31b6-42ad-b0f4-46c028d5e9e5
+valkyrie-transformed-44cedb93-deb2-4b88-ab3a-2beba60307a8
+valkyrie-transformed-26b72f39-54ee-4fb5-9a6b-036616e1a037
+discovery_streams-events
+forklift-events
+forklift-validated-12a42428-31b6-42ad-b0f4-46c028d5e9e5
+alchemist-raw-e58898ff-0660-4acb-9ecd-c72c33cb8018
+alchemist-raw-d19d74c8-2e4d-4092-a7d3-7478c2b53ee6
+forklift-validated-c5f78ca4-594e-47c9-a490-b0a66fb47ccd
+raptor-event-stream
+forklift-validated-c62371cd-662a-43f5-b03f-94046c44acc8
+reaper-event-stream
+alchemist-raw-ae7c993a-2fc3-4b69-9149-0dd14923f134
+andi_reader_group
+valkyrie-transformed-c5f78ca4-594e-47c9-a490-b0a66fb47ccd
+forklift-validated-9fd7b130-a170-4d11-99ce-d67e2e264dee
+valkyrie-transformed-c62371cd-662a-43f5-b03f-94046c44acc8
+valkyrie-events
+alchemist-raw-f6956178-c90b-4372-bab3-14beeaaa458b
+valkyrie-transformed-9fd7b130-a170-4d11-99ce-d67e2e264dee
+forklift-validated-44cedb93-deb2-4b88-ab3a-2beba60307a8
+discovery-api-event-stream
+valkyrie-transformed-c3c7bfca-f56f-4f24-9b1d-48f43992164c
+urbanos-python-tool
+andi-event-stream
+forklift-validated-26b72f39-54ee-4fb5-9a6b-036616e1a037
+
+# Estimated lag
+
+2025-04-08 11:39
+
+    "validated-12a42428-31b6-42ad-b0f4-46c028d5e9e5": 8400,
+    "validated-26b72f39-54ee-4fb5-9a6b-036616e1a037": 10815,
+    "validated-44cedb93-deb2-4b88-ab3a-2beba60307a8": 3042,
+    "validated-c62371cd-662a-43f5-b03f-94046c44acc8": 19,
+
+prod ingestions
+# ATMS Parking
+ingestion: d19d74c8-2e4d-4092-a7d3-7478c2b53ee6
+dataset:   26b72f39-54ee-4fb5-9a6b-036616e1a037
+
+ingestion: d19d74c8-2e4d-4092-a7d3-7478c2b53ee6
+dataset:   12a42428-31b6-42ad-b0f4-46c028d5e9e5
+
+# Work Zone
+ingestion: b617fde5-8ec8-49e4-8be4-1576aa300242
+dataset:   44cedb93-deb2-4b88-ab3a-2beba60307a8
+
+# Dynamic Signs
+ingestion: 3608a4e2-3e55-4e75-b74e-1728c2d43e32
+dataset:   c5f78ca4-594e-47c9-a490-b0a66fb47ccd
+
+# Truck Parking Status
+ingestion: ae7c993a-2fc3-4b69-9149-0dd14923f134
+dataset:   c62371cd-662a-43f5-b03f-94046c44acc8
+
+
+
+
+
+
+This should give some clue as to what the kafka groups are reading and writing to the topics.
+
+==============================================================================
+Wed Apr  2 16:23:23 EDT 2025
+==============================================================================
+
+PROD
+
+Looking at this descrepancy between the extraction_time and the ingestion_time.
+
+{'table': 'michigan_department_of_transportation__dynamic_message_sign_status', 'dsid': 'c5f78ca4-594e-47c9-a490-b0a66fb47ccd', 'ingestion_id': '3608a4e2-3e55-4e75-b74e-1728c2d43e32'}
+[{"_col0":"2025-03-19 16:30:03.000 UTC"}]
+
+./urbanos_watcher_textual.py -l 127.0.0.1 c5f78ca4-594e-47c9-a490-b0a66fb47ccd 3608a4e2-3e55-4e75-b74e-1728c2d43e32
+
+==============================================================================
+Mon Mar 31 09:11:03 EDT 2025
+==============================================================================
+
+## Satish transition notes.
+
+Hashicorp vault. Read up on it.
+
+vault-sealed=true
+
+it should be
+
+vault-sealed=false!
+
+Copy unseal-key-1, unseal-key-2, unseal-key-3, 
+
+In a terminal in each pod
+
+Run this command three times in the pod, pasting the key-1 thru key-3 each time.
+
+vault operator unseal
+
+Test by creating an ingestion secret. If the secret save fails you need to follow
+the root-token process to "fix" the unsealing.
+
+vault login and then paste the long command from the word document.
+
+vault login
+
+vault write auth/kubernetes/config kubernetes_host=https://kubernetes.default.svc.cluster.local:443 kubernetes_ca_cert=@/var/run/secrets/kubernetes.io/serviceaccount/ca.crt token_reviewer_jwt=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+
+==============================================================================
+Fri Mar 28 11:09:49 EDT 2025
+==============================================================================
+
+# QA REAPERS RUNNING
+
+Ingestion: 
+Ingestion:
+
+
+==============================================================================
+Wed Mar 26 11:05:39 EDT 2025
+==============================================================================
+
+In dev, checking to see if the fw changes took affect.
+
+oc rsh 
+
+ESS Test
+dsid:         74f4bcfa-2f53-4136-a5be-d9b987ea42f6
+ingestion_id: 5a1ea07c-8089-4fa3-bf5d-b0381778a1b9
+
+wget https://mdotatmsqa2.state.mi.us/atms/ess-rest/rest/ess
+
+# DEV REAPERS RUNNING.
+
+Ingestion: e0a56af2-65e5-4045-8566-9bbe3bf3c5a0 - Received data_extract_end event
+Ingestion: 3052f6f0-71de-4aa3-a0b2-fe85028ac753 - Received data_extract_end event
+Ingestion: 2c1631f9-09fa-4722-afad-0fd58a89ebe8 - Received data_extract_end event
+
+Active DEV ingestions/data sets
+
+# numDeleteIngest
+dsname:    testDelNumbers
+dsid:      13d850a5-c141-4546-9039-b50ea7fe4d3c
+ingest_id: e0a56af2-65e5-4045-8566-9bbe3bf3c5a0
+trino:     ryan_org__testdelnumbers
+
+# rtd-json-dates-test
+dsname:    RTD-json-date-test3
+dsid:      7a303389-0716-415b-a6d3-63d81e4dc09b
+ingest_id: 3052f6f0-71de-4aa3-a0b2-fe85028ac753
+trino:     mdot__rtdjsondatetest3
+
+# testIngestNestedDt
+dsname:    testNestedDate2
+dsid:      2b9d02d0-c3e9-41f3-94a4-ee141e786ca4
+ingest_id: 2c1631f9-09fa-4722-afad-0fd58a89ebe8
+trino:     ryan_org__nestedhyphens
+
+# ATMS_ESS
+dsname:    ESS Test
+dsid:      74f4bcfa-2f53-4136-a5be-d9b987ea42f6
+ingest_id: 5a1ea07c-8089-4fa3-bf5d-b0381778a1b9
+trino:     mdot__ess_test
+# Watch mdot__ess_test
+./urbanos_watcher_textual.py 127.0.0.1 74f4bcfa-2f53-4136-a5be-d9b987ea42f6 5a1ea07c-8089-4fa3-bf5d-b0381778a1b9
+
+# GIST Truck Static Parking
+dsid:      93204a2c-aa7b-4ad2-a10e-ab7c6ca0b77f
+ingest_id: 5c4f6f3b-6616-462d-adab-394eddc92ff1
+
+==============================================================================
+Tue Mar 25 15:26:29 EDT 2025
+==============================================================================
+
+Two forklift errors to track down.
+
+## Exception 1 - aborting compaction because more recent data is present in main table
+
+The abort compaction exception occurs when another dataset was loaded with a more recent "extract_time".
+
+## Exception 2 - no function clause matching in Integer.parse/2
+
+This redis call seemingly fails to return a value.
+
+{expected_message_count, _} =
+      Redix.command!(:redix, ["GET", "#{ingestion_id}" <> "#{extract_time}"])
+      |> Integer.parse()
+
+This happens when fork lift is going to mark an ingestion as load is complete.
+
+### Related Exception Stack Trace
+
+forklift 19:25:33.334 [error] GenServer #PID<0.15870.0> terminating                                                                          │
+│ forklift ** (FunctionClauseError) no function clause matching in Integer.parse/2                                                             │
+│ forklift     (elixir 1.10.4) lib/integer.ex:232: Integer.parse(nil, 10)                                                                      │
+│ forklift     (forklift 0.19.28) lib/forklift/data_writer.ex:233: Forklift.DataWriter.create_ingestion_complete_data/4                        │
+│ forklift     (forklift 0.19.28) lib/forklift/data_writer.ex:135: Forklift.DataWriter.write_to_table/4                                        │
+│ forklift     (forklift 0.19.28) lib/forklift/data_writer.ex:100: anonymous fn/4 in Forklift.DataWriter.do_write/4                            │
+│ forklift     (elixir 1.10.4) lib/enum.ex:3686: Enumerable.List.reduce/3                                                                      │
+│ forklift     (elixir 1.10.4) lib/stream.ex:931: Stream.do_list_transform/7                                                                   │
+│ forklift     (elixir 1.10.4) lib/enum.ex:2161: Enum.reduce_while/3                                                                           │
+│ forklift     (forklift 0.19.28) lib/forklift/data_writer.ex:99: Forklift.DataWriter.do_write/4 
+
+==============================================================================
+Mon Mar 24 16:30:42 EDT 2025
+==============================================================================
+
+Tracking down a prod problem with stale data.
+
+{'table': 'michigan_department_of_transportation__atms_parking', 'dsid': '26b72f39-54ee-4fb5-9a6b-036616e1a037', 'ingestion_id': 'd19d74c8-2e4d-4092-a7d3-7478c2b53ee6'}
+[{"_col0":"2025-03-21 17:25:00.000 UTC"}]
+
+./urbanos_watcher_textual.py -l 127.0.0.1 26b72f39-54ee-4fb5-9a6b-036616e1a037 d19d74c8-2e4d-4092-a7d3-7478c2b53ee6
+
+{'table': 'michigan_department_of_transportation__dynamic_message_sign_status', 'dsid': 'c5f78ca4-594e-47c9-a490-b0a66fb47ccd', 'ingestion_id': '3608a4e2-3e55-4e75-b74e-1728c2d43e32'}
+[{"_col0":"2025-03-19 16:30:03.000 UTC"}]
+
+./urbanos_watcher_textual.py -l 127.0.0.1 c5f78ca4-594e-47c9-a490-b0a66fb47ccd 3608a4e2-3e55-4e75-b74e-1728c2d43e32
+
+{'table': 'michigan_department_of_transportation__dynamic_message_signs', 'dsid': 'c3c7bfca-f56f-4f24-9b1d-48f43992164c', 'ingestion_id': '3608a4e2-3e55-4e75-b74e-1728c2d43e32'}
+[{"_col0":"2025-03-19 18:10:08.000 UTC"}]
+
+./urbanos_watcher_textual.py -l 127.0.0.1 c3c7bfca-f56f-4f24-9b1d-48f43992164c 3608a4e2-3e55-4e75-b74e-1728c2d43e32 
+
+==============================================================================
+Tue Mar 18 14:18:51 EDT 2025
+==============================================================================
+
+After applying experimental WSL config change (described below) I can't
+route traffic to the openshift cluster neither from WSL or Windows. :-(
+
+A reboot fixed that and then the change seemingly worked until I went back home.
+
+PS C:\Users\sewardr1> Test-NetConnection -ComputerName 10.231.110.30 -TraceRoute
+WARNING: Ping to 10.231.110.30 failed with status: TimedOut                     WARNING: Trace route to destination 10.231.110.30 did not complete. Trace terminated :: 0.0.0.0                                                                 ComputerName           : 10.231.110.30
+RemoteAddress          : 10.231.110.30
+InterfaceAlias         : Ethernet 2
+SourceAddress          : 10.254.60.150
+PingSucceeded          : False
+PingReplyDetails (RTT) : 0 ms
+TraceRoute             : 10.46.127.8
+                         10.36.252.4
+                         10.36.3.129
+                         10.36.1.146
+                         10.36.6.118
+                         0.0.0.0
+                         0.0.0.0  
+
+==============================================================================
+Tue Mar 18 11:35:03 EDT 2025
+==============================================================================
+
+This is the solution to my WSL2 / AnyConnect VPN problem.
+
+PS C:\Users\sewardr1> cat .\.wslconfig
+[wsl2]
+
+[experimental]
+networkingMode=mirrored
+
+==============================================================================
+Tue Mar 18 09:58:48 EDT 2025
+==============================================================================
+
+Is this still expected? The production discovery api endpoint is serving up
+datasets that were loaded approximately a week ago. I am still learning if this is expected or not.
+
+- michigan_department_of_transportation__atms_parking
+[{"_col0":"2025-03-08 08:10:00.000 UTC"}]
+0 */5 * * * *
+.- michigan_department_of_transportation__dynamic_message_sign_status
+[{"_col0":"2025-03-07 02:05:01.000 UTC"}]
+.- michigan_department_of_transportation__dynamic_message_signs
+[{"_col0":"2025-03-10 22:15:00.000 UTC"}]
+0 */5 * * 1 *
+.- michigan_department_of_transportation__incidents
+[{"_col0":"2025-03-10 22:15:00.000 UTC"}]
+.- michigan_department_of_transportation__truck_parking_dynamic
+[{"_col0":"2025-03-07 20:05:00.000 UTC"}]
+.- michigan_department_of_transportation__truck_parking_static
+[{"_col0":"2025-03-10 22:00:00.000 UTC"}]
+
+On QA the discovery the mdt__atms end point is even older. 
+
+- mdot__atms
+[{"_col0":"2025-02-04 20:40:06.000 UTC"}]
+.- mdot__atms_qa_test_ess
+[{"_col0":"2025-03-16 12:00:00.000 UTC"}]
+.- mdot__event_qa_test
+[{"_col0":"2025-03-16 12:00:00.000 UTC"}]
+.- mdot__new_dataset_20250227
+[{"_col0":"2025-03-16 12:00:00.000 UTC"}]
+
+If all this is expected please let me know. If there is something I can assist
+with, I would be happy to look into things.
+
+Thank you,
+Rob
+
+
+
+==============================================================================
+Tue Mar 11 10:32:47 EDT 2025
+==============================================================================
+
+Created this repo for SOM specific code projects. Like python web tests.
+
+https://github.com/UrbanOS-Public/som_ride_support.git
+
+==============================================================================
+Wed Mar  5 12:20:33 EST 2025
+==============================================================================
+
+kibana boon doggle.
+
+https://kibana-openshift-logging.apps.ocprod.ngds.state.mi.us/goto/c085388f10508bcf32c137563ec7f674?security_tenant=private
+
+Kibana Filter:
+
+kubernetes.namespace_name is mdot-ride-prod-ns
+
+
+==============================================================================
+Wed Mar  5 11:25:51 EST 2025
+==============================================================================
+
+Query Postgres
+oc rsh postgresql-qa-0 psql -U postgres
+
+~/bin/goqapg
+
+==============================================================================
+Wed Mar  5 10:30:57 EST 2025
+==============================================================================
+
+Information to query trinodb
+
+oc rsh trino-coordinator trino
+
+Per the apps/discovery_api/config/config.exs configuration.
+
+trino
+catalog: hive
+schema:  default
+
+trino> use hive.default;
+trino.default> select count(1) from mdot__event_qa_test;
+ _col0
+-------
+   371
+(1 row)
+
+Query 20250305_153030_18002_4y4rz, FINISHED, 1 node
+Splits: 4 total, 4 done (100.00%)
+0.14 [371 rows, 20KiB] [2.67K rows/s, 144KiB/s]
+
+trino:default>
+
+Play with a notebook to connect to the database in the cluster.
+
+==============================================================================
+Tue Mar  4 11:55:22 EST 2025
+==============================================================================
+
+QA difficulties.
+
+16:54:00.629 [warn] Elixir.Elsa.DynamicProcessManager: initializer raised exception, retrying: %KeyError{key: :topic, message: nil, term: []}
+16:54:01.630 [warn] Elixir.Elsa.DynamicProcessManager: initializer raised exception, retrying: %KeyError{key: :topic, message: nil, term: []}
+16:54:00.618 [info] Ingestion: 4acc3a84-0dc1-40f4-93ec-fa75986d1257 - Received data_extract_start event
+
+ds_id:        a0e48bcd-c658-4401-ac7e-f8d036d8c3ed
+ingestion_id: 4acc3a84-0dc1-40f4-93ec-fa75986d1257
+
+Forlift:
+16:35:15.230 [info] Ingestion: 4acc3a84-0dc1-40f4-93ec-fa75986d1257 - Received data_extract_start event from reaper
+3216:35:15.230 [error] Could not find dataset_id: a0e48bcd-c658-4401-ac7e-f8d036d8c3ed in ingestion: 4acc3a84-0dc1-40f4-93ec-fa75986d1257
+
+The alchemist error repeats every 1 sec. at or near line 119 in the ELSA library code:
+https://github.com/bbalser/elsa/blob/master/lib/elsa/dynamic_process_manager.ex
+
+ELSA seems to be an Elixir Kafka library.
+
+
+==============================================================================
+Mon Mar  3 14:17:22 EST 2025
+==============================================================================
+
+Working on unit tests for prod datasets.
+
+michigan_department_of_transportation__atms_parking
+michigan_department_of_transportation__dynamic_message_sign_status
+michigan_department_of_transportation__incidents
+michigan_department_of_transportation__truck_parking_dynamic
+michigan_department_of_transportation__truck_parking_static
+
+==============================================================================
+Mon Mar  3 11:10:40 EST 2025
+==============================================================================
+
+SELECT MAX(FROM_UNIXTIME(_extraction_start_time)) FROM michigan_department_of_transportation__dynamic_message_signs
+LIMIT 200
+
+curl -X POST 'https://mdotridedata.state.mi.us//api/v1/query?_format=json' -H 'Content-Type: text/plain' -H 'api_key: VRwlhx3V8rFNVzuUsm-L0Rje' -d 'SELECT MAX(FROM_UNIXTIME(_extraction_start_time)) FROM michigan_department_of_transportation__dynamic_message_signs LIMIT 200'
+
+==============================================================================
+Fri Feb 28 17:40:58 EST 2025
+==============================================================================
+
+Hello Team,
+
+After an afternoon of watching the RIDE application pods. I noticed at about 4:10 PM that the redis master and replica pods entered a CrashLoopBackoff cycle. The two pods are dependent on each other and can't seem to find a healthy equilibrium. I didn't see anything in there logs to indicate the root of their problem. I thought with my prod openshift namespace rights I might have some influence on the pods. E.g. I thought I might be able to scale the pods down and start one pod after another to bring them back into a stable state. However I discovered my admin privileges do not allow me to scale it.
+
+Not being able to help the redis pods directly. I tried scaling down the RIDE pods most dependent on redis.
+
+  - forklift
+  - reaper
+  - valkyrie
+
+However bringing those pods offline didn't seem to have any influence on the health of the redis pods.
+
+It would appear on Monday, Satish, Nikki and I have to put our heads together to better understand how to restore the redis pods to a healthly state.
+
+Until we resolve the redis problem, the RIDE application itself will not be stable. 
+
+This is not the status I would have liked to have reported, but I think this is where we are for this weekend. Let me know if there is a protocol for bringing the app back to health over the weekend. I fairly certain, I can NOT do it alone, but I am available to provide required assistance.
+
+Thank you,
+Rob
+
+
+
+==============================================================================
+Fri Feb 28 09:15:24 EST 2025
+==============================================================================
+
+Example of a problematic prod datasets.
+
+truck free parking:
+dataset: 26b72f39-54ee-4fb5-9a6b-036616e1a037
+ingestion: d19d74c8-2e4d-4092-a7d3-7478c2b53ee6
+
+traffic incidents:
+dataset: 9fd7b130-a170-4d11-99ce-d67e2e264dee
+ingestion: e58898ff-0660-4acb-9ecd-c72c33cb8018
+
+trino-coordinator 2025-02-28T20:58:16.843Z    WARN    http-client-memoryManager-scheduler-1    io.trino.memory.RemoteNodeMemory    Error fetching memory info from http://11.104.16.237:8080/v1/memory: java.util.concurrent.TimeoutException: Total tim │
+│ trino-coordinator 2025-02-28T20:58:16.845Z    WARN    http-client-node-manager-scheduler-1    io.trino.metadata.RemoteNodeState    Error fetching node state from http://11.104.16.237:8080/v1/info/state: java.util.concurrent.TimeoutException: Total
+
+Problems with trino after redis pod restarts.
+
+Restart redis
+kubectl scale --replicas=0 statefulset/redis-prod-master -n mdot-ride-prod-ns
+kubectl scale --replicas=0 statefulset/redis-prod-replicas -n mdot-ride-prod-ns
+#kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/redis-prod-master-0
+#kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/redis-prod-replicas-0
+sleep 60
+kubectl scale --replicas=1 statefulset/redis-prod-master -n mdot-ride-prod-ns
+kubectl scale --replicas=1 statefulset/redis-prod-replicas -n mdot-ride-prod-ns
+#kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/redis-prod-master-0
+#kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/redis-prod-replicas-0
+
+
+Restart trino
+kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/ride-prod-trino-coordinator
+kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/ride-prod-trino-coordinator
+
+.. and likely
+kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/ride-prod-trino-worker
+kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/ride-prod-trino-worker
+
+.. also likely
+kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/forklift
+kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/forklift
+
+.. also likely
+kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/reaper
+sleep 60
+kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/reaper
+
+.. also likely
+kubectl scale --replicas 0 -n mdot-ride-prod-ns deployment/valkyrie
+sleep 60
+kubectl scale --replicas 1 -n mdot-ride-prod-ns deployment/valkyrie
+
+
+==============================================================================
+Thu Feb 27 14:19:04 EST 2025
+==============================================================================
+
+From this email. It turns out Nikki Anderson is our RIDE application admin.
+
+
+Email to Aaron Chils.
+
+Hello Aaron,
+
+Hello Nikki,
+
+I am new to the RIDE support team. Satish is out this week with his newborn child.
+
+However we are having a problem with our RIDE application cluster.
+
+Our redis pods are NOT staying in a reliable healthy state.
+
+I believe restarting these redis pods would improve the functionality of our application. Currently our datasets are NOT being published correctly because of the unstable redis nodes.
+
+I can share some log messages which indicate this if you would like to see them.
+
+Therefor I am requesting we restart the following pods in our cluster:
+
+mdot-ride-prod-ns
+- redis-prod-master-0
+- redis-prod-replicas-0
+
+I would do this myself, however I currently do not have the permissions to do it. Also Satish will not be in the office until next week.
+
+If you are not the correct person to execute this task in Satish's absence, please forward this request onto the appropriate resource.
+
+Ian Abbott gave me your name as the current RIDE OpenShift administrator.
+
+If there are any questions please ask.
+
+Thank you,
+Rob
+
+==============================================================================
+Wed Feb 26 15:41:36 EST 2025
+==============================================================================
+
+Prod issue while Satish is away.
+
+Dataset:8b62c122-d515-48a9-b114-b84e79e1649d  Ingestion: b0fdf210-e896-4113-9b92-555fad9c9b15
+
+2nd impacted dataset:
+Dataset:c5f78ca4-594e-47c9-a490-b0a66fb47ccd  Ingestion: 3608a4e2-3e55-4e75-b74e-1728c2d43e32
+
+Looking at k9s logs. I can't view kafka topics or messages.
+
+Periodically from pipeline-kafka-0:
+
+kafka 2025-02-26 20:43:10,097 INFO [Controller id=0] Processing automatic preferred replica leader election (kafka.controller.KafkaControlle │
+│ kafka 2025-02-26 20:43:10,097 TRACE [Controller id=0] Checking need to trigger auto leader balancing (kafka.controller.KafkaController) [con │
+│ kafka 2025-02-26 20:43:10,097 DEBUG [Controller id=0] Topics not in preferred replica for broker 0 HashMap() (kafka.controller.KafkaControll │
+│ kafka 2025-02-26 20:43:10,097 TRACE [Controller id=0] Leader imbalance ratio for broker 0 is 0.0 (kafka.controller.KafkaController) [control │
+
+Periodically from valkyrie:
+valkyrie Leaving group, reason: :shutdown
+
+
+reaper -> alchemist -> 
+
+
+==============================================================================
+Mon Feb 24 16:17:13 EST 2025
+==============================================================================
+
+ATMS_ESS / ESS Test - Joe's test dataset he shared on dev.
+
+dsid: 74f4bcfa-2f53-4136-a5be-d9b987ea42f6
+igid: 5a1ea07c-8089-4fa3-bf5d-b0381778a1b9
+
+Ingestion URL:
+https://mdotatmsqa2.state.mi.us/atms/ess-rest/rest/ess
+
+Status: Error info_outline Time: 8033.534 ms
+
+bash-5.1$ wget https://mdotatmsqa2.state.mi.us/atms/ess-rest/rest/ess
+Connecting to mdotatmsqa2.state.mi.us (10.231.113.167:443)
+wget: can't connect to remote host (10.231.113.167): Operation timed out
+
+
+==============================================================================
+Fri Feb 21 18:05:18 EST 2025
+==============================================================================
+
+https://github.com/InternetJava/kafka-books/blob/main/Kafka%20The%20Definitive%20Guide%20(2nd%20Edition).pdf
+
+==============================================================================
+Thu Feb 13 15:44:05 EST 2025
+==============================================================================
+
+The date time parsing / formatting primitives available to RIDE:
+
+https://hexdocs.pm/timex/Timex.Format.DateTime.Formatters.Default.html
+
+Working timestamp expression for RIDE ingestion schema
+{0M}/{0D}/{YYYY} {h24}:{m}:{s}{Z}
+
+Kafka trouble shooting tips for the dataset.
+
+List topics
+ $KAFKA_HOME/bin/kafka-topics.sh --bootstrap-server=localhost:9092 --list
+ 
+Show Kafka Messages
+  $KAFKA_HOME/bin/kafka-console-consumer.sh --bootstrap-server=localhost:9092 --topic=transformed-7a303389-0716-415b-a6d3-63d81e4dc09b 
+
+Samsung Neo G9 QHD
+
+After investigation with Mikey, we find:
+
+Urbanos does not currently support transformations of all list items.
+
+nested_list[0].date
+
+This works for my data set with one item in an array.
+
+The likely real solution would be alter the transformation code:
+
+smartcitiesdata/app/Transformers/transform_actions.ex 
+ 
+
+==============================================================================
+Wed Feb 12 11:20:53 EST 2025
+==============================================================================
+
+export API_KEY=7KP_TRC-ZT5TrpCDGOLQyg78
+ curl -k --header "api_key: $API_KEY" 'https://discovery-api-mdot-ride-dev-ns.apps.ocnonprd.ngds.state.mi.us/api/v1/organization/ryan_org/dataset/nestedhyphens/query?limit=200&_format=json'
+
+==============================================================================
+Fri Feb  7 16:39:52 EST 2025
+==============================================================================
+
+New Discovery_UI 2.1.52 ready to test on Monday!
+
+Working with Mikey on resolving react_discovery_ui out of date deps.
+
+Tips:
+  - use `npm outdated` to guide the work to be done
+  - theory: `npm update` should bring all the outdated packages to "wanted" versions
+  - reality: it seems to go beyond that! Tests fail when simply running that.
+
+However, this worked. Walk through the list of "outdated" packages to run command like these:
+
+`npm update redux`
+
+This will update one singular package at a time. Updating like this made most of the packages drop off the outdated list. Plus the tests continued to run.
+
+Notes from the session.
+
+```
+npm update babel-jest # 29.7.0
+npm update jest
+npm update @testing-library/jest-dom # 5.16.5 -> 5.17.0
+npm update webpack-dev-server # 4.11.1 -> 4.15.2 
+npm update redux # 4.2.0 ->  4.2.1
+npm update redux-mock-store #  1.5.4  ->  1.5.5
+npm update @babel/runtime   #  7.20.13 -> 7.26.7
+npm update assert #   2.0.0 ->   2.1.0
+
+npm update @babel/plugin-proposal-do-expressions @babel/plugin-proposal-export-default-from @babel/plugin-proposal-function-bind @babel/plugin-proposal-function-sent @babel/plugin-proposal-optional-chaining @babel/plugin-proposal-pipeline-operator @babel/plugin-proposal-throw-expressions @babel/preset-env @babel/preset-react
+
+npm update css-loader #  6.7.3 ->  6.11.0
+npm update jest-environment-jsdom  # 29.4.0 -> 29.7.0
+
+babel-loader              #   8.3.0 ->   8.4.1   
+enzyme-adapter-react-16   #  1.15.7 ->  1.15.8  
+handlebars                #   4.7.7 ->   4.7.8  
+html-webpack-plugin       #   5.5.0 ->   5.6.3  
+leaflet                   #   1.9.3 ->   1.9.4  
+mini-css-extract-plugin   #   2.7.2 ->   2.9.2
+node-fetch                #   3.3.0 ->   3.3.2
+postcss-loader            #   7.0.2 ->   7.3.4
+postcss-scss              #   4.0.6 ->   4.0.9
+qs                        #  6.13.0 ->  6.14.0
+
+npm update babel-loader enzyme-adapter-react-16 handlebars html-webpack-plugin    leaflet   mini-css-extract-plugin node-fetch  postcss-loader postcss-scss      qs
+
+npm qs react-device-detect  react-modal  reselect sass
+
+npm update sass-loader   # 10.4.1   10.5.2  16.0.4 
+npm update standard  #                  17.0.0   17.1.2  17.1.2 
+npm update typescript #                   4.9.4    4.9.5   5.7.3 
+npm update webpack-cli #                 5.0.1    5.1.4   6.0.1 
+npm update webpack-merge #                5.8.0   5.10.0   6.0.1 
+```
+
+Updating packages one by one from "npm outdated" yeilds succesful tests.
+
+Where as running "npm update" all at once yeilds failed tests.
+
+
+==============================================================================
+Fri Feb  7 10:22:33 EST 2025
+==============================================================================
+
+Building out a python unit test for discovery_ui
+
+These are the urls revealed by my research:
+- https://discovery-ui-mdot-ride-dev-ns.apps.ocnonprd.ngds.state.mi.us/
+- https://discovery-ui-mdot-ride-dev-ns.apps.ocnonprd.ngds.state.mi.us/dataset/ryan_org/nestedhyphens
+- https://discovery-api-mdot-ride-dev-ns.apps.ocnonprd.ngds.state.mi.us/api/v1/organization/ryan_org/dataset/nestedhyphens/query?limit=200&_format=json
+
+==============================================================================
+Thu Feb  6 17:03:57 EST 2025
+==============================================================================
+
+Mikey's npm foo
+
+npm audit      # shows vulnerabilities no mods
+npm audit fix  # attempts to remediate vulnerabilities (with breakage?)
+npm outdated   # gives a nice summary of versions of the packages in the project
+npm update     # Updates the project to the wanted version of the files
+
+==============================================================================
+Tue Feb  4 16:24:23 EST 2025
+==============================================================================
+
+Trying to fetch Ian's nestedhyphens dataset however I am lacking an access key
+to fetch them.
+
+export API_KEY=7KP_TRC-ZT5TrpCDGOLQyg78
+ curl -k --header "api_key: $API_KEY" 'https://discovery-api-mdot-ride-dev-ns.apps.ocnonprd.ngds.state.mi.us/api/v1/organization/ryan_org/dataset/nestedhyphens/query?limit=200&_format=json'
+
+==============================================================================
+Mon Feb  3 11:07:47 EST 2025
+==============================================================================
+
+JavaScript License Checker / Audit Tool
+
+https://www.npmjs.com/package/license-checker-rseidelsohn
+
+==============================================================================
+Fri Jan 31 11:24:19 EST 2025
+==============================================================================
+
+reaper/lib/reaper/application.ex
+  - start function
+
+
+smartcitiesdata/.github/workflows/ - Dir for github workflow yamls
+
+
+SOM Ride Project Resources
+  - Steve Sibula SOM MILogin resource.
+  - Nikki Anderson - Cloudflare / Networking SOM
+  
+Nik Goodwin attempted Erlang / Elixir upgrade.
+  - Pull request for Full Revision Bump
+
+Ian   April 2024
+Mikey 2022 - April 2023
+
+==============================================================================
+Thu Jan 30 15:57:53 EST 2025
+==============================================================================
+
+Watch all kafka events as they occur.
+  - consult internal wiki file "Debugging Kafka"
+  - shell into kafka-pipeline pod
+  - Run a command like this:
+    $KAFKA_HOME/bin/kafka-console-consumer.sh --topic=event-stream --bootstrap-server=localhost:9092
+
+minio console that shows some of the data store locations.
+  - test-minio-console
+
+Components that require a cluster admin to upgrade:
+
+Operator based
+ - strimzi (kafka)
+ - minio
+
+Due to the resources the pods need in the cluster:
+ - vault
+ - postgres
+ - redis
+
+TODO:
+  - research strimzi org
+  - research hashicorp vault
+  - ask Satish for access to stackrox
+  
+Aaron Chils - OpenShift cluster admin
+
+urbanos-trino was an image Ian worked on to resolve prometheus CVEs but decided against using it in favor of ubi-trino.
+
+Fixable prometheus CVS might be fixable by adding this to the ubi-trino:/Dockerfile
+
+RUN rm usr/lib/trino/plugin/hive/io.prometheus_prometheus-metrics-core-1.0.0.jar
+rm -f /usr/lib/trino/plugin/hive/*prometheus*.jar
+
+CVEs in stackrox -
+
+==============================================================================
+Wed Jan 29 15:58:15 EST 2025
+==============================================================================
+
+Joe's Top Level Selector problem yeilds an invalid list exception in VALKYRIE.
+
+apps/valkyrie/lib/valkyrie/valkyrie.ex
+
+Use this jsonpath:
+
+$.data
+
+Don't exclude child_of_list. Include it.
+
+==============================================================================
+Wed Jan 29 14:11:28 EST 2025
+==============================================================================
+
+Dynamically loading new code into a running system.
+
+Open a shell into the pod.
+
+bin/forklift remote_console
+
+Copy the content of entire Module, elixir will replace the running code with the new code you paste in.
+
+==============================================================================
+Wed Jan 29 11:31:01 EST 2025
+==============================================================================
+
+NVIDIA Cuda install under ubuntu WSL
+
+Installed NVIDIA RTX 4000 Ada Drivers twice! Still no NVCP but moving on.
+
+Following these instructions.
+
+- https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_local
+- https://docs.nvidia.com/cuda/wsl-user-guide/index.html#getting-started-with-cuda-on-wsl-2
+
+I am at the stage of running these two commands but they ultimately fail even tethered to my tablet. :-( . Will retry at home.
+
+sudo apt-get -y update
+sudo apt-get -y install cuda-toolkit-12-8
+
+==============================================================================
+Wed Jan 29 10:09:40 EST 2025
+==============================================================================
+
+trino-worker is throwing this consistently on QA.
+
+2025-01-29T15:08:04.062Z        ERROR   page-buffer-client-callback-19  io.trino.operator.HttpPageBufferClient  Request to delete http://11.103.45.235:8080/v1/task/20250129_150804_18535_ydui7.1.0.0/results/0 failed java.util.concurrent.CancellationException: Task was cancelled.
+
+OVERWRITE_MODE which SOM is using, deletes all data from a datasets before
+reloading new data.
+
+Interesting code related to the topic:
+
+forklift/jobs/data_migration.ex
+  - compaction code and overwrite logic
+
+==============================================================================
+Mon Jan 27 17:38:06 EST 2025
+==============================================================================
+
+trivy - open source CVE scanning tool
+
+prometheus XSS CVE. Our app doesn't expose the JS API, but we might consider
+closing this potential CVE based on the effort required.
+CVE-2019-3826
+
+From Ian doing a postgres query
+  shelling into postgres:
+  shell into pod
+  psql -U postgres
+  enter password from openshift secrets
+
+==============================================================================
+Fri Jan 24 13:37:17 EST 2025
+==============================================================================
+
+ - Worked with Ian on running helm and other openshift command lines tools
+   from my laptop for the RIDE project
+ - Did a weeks worth of KT sessions with Ian resolving CVEs for:
+   - discovery-ui
+   - ubi-hive, urbanos-hive, urbanos-kafka
+   - trino (a database layer for RIDE)
+ - I resolved VPN issues I was having with WSL2 and podman desktop
+   
+==============================================================================
+Fri Jan 24 09:01:33 EST 2025
+==============================================================================
+
+sudo apt-get install openconnect podman -y
+brew install podman-remote
+brew install derailed/k9s/k9s
+ 
+==============================================================================
+Thu Jan 23 11:18:25 EST 2025
+==============================================================================
+
+stackrox pod image scanning tool used by SOM OpenShift cluster.
+
+ubi-hive
+  - pulls zip files from urbanos-hive and urbanos-hadoop. See the curl statements used during github actions.
+
+urbanos-hive:
+  - urbanos active branch is on Apache's branch-3.1
+  - build hive->run workflow
+
+urbanos-hadoop
+  - urbanos active branch is on Apache's branch-3.3
+
+Look up .baseimagedigest values
+https://catalog.redhat.com/software/containers/ubi9/ubi/615bcf606feffc5384e8452e?image=677f78b6c7b7613c66fc3e0b&architecture=arm64&container-tabs=gti&gti-tabs=unauthenticated
+
+==============================================================================
+Thu Jan 23 09:26:39 EST 2025
+==============================================================================
+
+
+My WSL2 instances are being hit with this Cisco AnyConnect problem:
+
+https://gist.github.com/pyther/b7c03579a5ea55fe431561b502ec1ba8
+
+Before I discovered the above link, I discovered the following solution.
+Drawing inspiration from the Accenture VPN enabled container.
+
+https://github.com/UrbanOS-Public/anyconnect-vpn-in-container
+
+I installed openconnect in my 24.04 instance. I created the ~/bin/gosomvpn
+script to open a VPN connection. That works! Although I have to connect in
+the WSL container as well as the windows desktop a bit of a PITA.
+
+Circle back to the gist and see if that solves the problem in a more
+elegant fashion?
+
+==============================================================================
+Wed Jan 22 15:48:14 EST 2025
+==============================================================================
+
+brew install norwoodj/tap/helm-docs
+https://github.com/databus23/helm-diff
+helm plugin install https://github.com/databus23/helm-diff
+
+helm pull urbanos/urban-os
+export chart_version=1.13.66
+./deploy_urban_os.sh -n mdot-ride-dev-ns -r ride -e envs/mdot/dev/mdot_dev_env.sh -f envs/mdot/dev/mdot_dev_values_urban_os.yaml -k envs/mdot/dev/kustomize -c ../charts/urban-os-${chart_version}.tgz -x
+
+==============================================================================
+Tue Jan 21 12:15:21 EST 2025
+==============================================================================
+
+IAN's VPN in a container.
+
+https://github.com/UrbanOS-Public/anyconnect-vpn-in-container
+
+apps/telemetry
+  - enables prometheus
+  
+
+==============================================================================
+Fri Jan 17 15:11:55 EST 2025
+==============================================================================
+
+- https://github.com/UrbanOS-Public/internal
+- https://github.com/UrbanOS-Public/openshift-deploy
+
+==============================================================================
+Thu Jan 16 10:30:58 EST 2025
+==============================================================================
+
+Licenses I have discovered
+
+GPL (runtime, unlikely to be changed by SOM)
+LGPL (runtime, unlikely to be changed by SOM)
+Apache 2 License (UrbanOS code base)
+Alfredo License (UrbabOS code base)
+
+==============================================================================
+Wed Jan 15 16:03:59 EST 2025
+==============================================================================
+
+## ANDI URL:
+
+- https://127.0.0.1.nip.io:4443/
+
+## Ian's Test Data Set:
+- https://gist.github.com/ian-j-abbott-accenture/b5806dde25c6428495f9622cf6fb3e79
+- https://gist.githubusercontent.com/ian-j-abbott-accenture/b5806dde25c6428495f9622cf6fb3e79/raw/363c71c57cab8f3fd1f8d7055613d224abae749a/parking_data_nil.json
+
+## Discovery React UI 
+- https://github.com/UrbanOS-Public/react_discovery_ui
+
+## SSL 1.1 vulnerabilities
+- https://openssl-library.org/news/vulnerabilities-1.1.1/
+
+## TODO
+
+- reaper [ data sources, kafka ]
+- alchemist [ kafka ]
+- valkyrie  [ kafka ]
+- forklift [ trino ]
+- discovery-api [ elastisearch]
+
+- discovery-ui [ react ]
+
+
+==============================================================================
+Tue Jan 14 13:51:50 EST 2025
+==============================================================================
+
+Troubleshooting session. My experiment with using a modern erlang + elixir updated hex packages in mix.lock. In order to be more successful in bringing up pods with docker.start, I had to pull the mix.lock from the gitrepo and then redo "mix deps.get" from the root of the smartcitiesdata project dir.
+
+The pods came up. However the divo code waiting for pods to appear as healthy waits forever for it's healthy assessment. 
+
+From Ian.
+
+Here are the startup commands for each application that I use:
+
+raptor:
+AUTH0_CLIENT_SECRET=ehZMQdy43SeshkRLQa03m36hElAiFeqTWXqxIUeNEbS3eo7nNLfc_To3TQjhLOYI MIX_ENV=integration iex -S mix start
+
+andi: 
+AUTH0_CLIENT_SECRET=8z_q5nB-8s44duzGc1NzjasvAjGbASk9X8hzRuIq0YbntNb1mbzE2Q3PXEpWnkxo MIX_ENV=integration iex -S mix start
+
+discovery-api:
+MIX_ENV=integration iex -S mix start
+
+reaper, alchemist, valkyrie, forklift:
+MIX_ENV=integration iex -S mix
+
+==============================================================================
+Mon Jan 13 11:36:10 EST 2025
+==============================================================================
+
+OpenSSL 1.1.1 issue.
+
+- https://github.com/openssl/openssl/issues/20094
+- https://en.wikipedia.org/wiki/OpenSSL
+- https://openssl-corporation.org/post/2023-09-11-eol-111/#:~:text=1%20was%20released%20on%2011th,of%20today%2C%2011th%20September%202023.
+
+==============================================================================
+Tue Jan  7 10:16:57 EST 2025
+==============================================================================
+
+Troubleshooting Kafka problems. strimzi issue.
+
+Kafka 3.5 -> 3.71
+
+
+==============================================================================
+Mon Jan  6 15:37:50 EST 2025
+==============================================================================
+
+Trying to access various things related to the image registry quay and other things. Satish gave me this URL to test my IDP login.
+
+- https://pingone.state.mi.us/myapps/#
+#- https://pingfed.ngds.state.mi.us:9031/idp/SSO.saml2
+
+==============================================================================
+Mon Jan  6 11:51:37 EST 2025
+==============================================================================
+
+Working thru UrbanOS install. Previous asdf approach ended in SSL problems.
+
+Accenture seems to document a work around used on MacOS. Try under ubuntu
+if latest erlang and elixir versions don't work out.
+
+- https://github.com/UrbanOS-Public/smartcitiesdata/wiki/Setup#faq
+
+==============================================================================
+Fri Jan  3 08:54:23 EST 2025
+==============================================================================
+
+Ubuntu deps
+
+sudo apt-get install autoconf -y
+sudo apt-get install build-essential -y
+sudo apt-get install libssl-dev ncurses-dev -y
+
+Installing asdf under WSL2.
+
+# https://asdf-vm.com/guide/getting-started.html
+
+git clone https://github.com/asdf-vm/asdf.git ~/.asdf --branch v0.15.0
+
+Add this to .bashrc
+
+if [ -d $HOME/.asdf/ ] ; then
+    . "$HOME/.asdf/asdf.sh"
+    . "$HOME/.asdf/completions/asdf.bash"
+fi
+
+ asdf plugin add erlang
+ asdf plugin add elixir
+ asdf plugin add nodejs
+ asdf global erlang 23.2.7.5
+ asdf global elixir 1.10.4-otp-23
+
+==============================================================================
+Thu Jan  2 17:45:50 EST 2025
+==============================================================================
+
+Things to ask Satish:
+ - Can he provide the openshift_deploy github repo?
+ - How did he install docker-desktop?
+
+==============================================================================
+Mon Dec 30 08:27:30 EST 2024
+==============================================================================
+
+ATMS - Advanced Transport Management System
+
+Source Code:
+- andi        == 20241230
+- dead_letter == 20241230
+- discovery_api
+- dlq
+- estuary     == 20241230
+- flair       == stats on kafka events
+- forklift
+- performance
+- 
+
+
+==============================================================================
+Fri Dec 27 15:16:46 EST 2024
+==============================================================================
+
+git clone https://github.com/UrbanOS-Public/smartcitiesdata.git
+
+==============================================================================
+Thu Dec 26 11:43:47 EST 2024
+==============================================================================
+
+RIDE application.
+
+Satish roles:
+- Admin tasks for RIDE admin.
+
+SOM SSO Login Portals
+
+# QA
+- https://miloginworkerqa.michigan.gov/uisecure/selfservice
+
+# PROD
+- https://miloginworker.michigan.gov/uisecure/selfservice
+
+UrbanOS-Public
+- https://github.com/UrbanOS-Public/smartcitiesdata/wiki/Architecture
+
+ATMS == Advanced Traffic Management System
+CORS == ~GPS System. Geo location to within inches.
+
+
+
+==============================================================================
+Thu Dec 26 08:42:40 EST 2024
+==============================================================================
+
+Notes on setting up the Windows laptop.
+
+## WSL winhome soft link
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+## WSL Utilities
+
+ubuntu packages
+python3-pip
+eza
+fzf
+python3-virtualenv
+zoxide
+sudo apt-get install python3-pip eza fzf python3-virtualenv zoxide -y
+sudo apt-get install pass emacs screen  -y
+sudo apt-get install build-essential gcc -y
+sudo apt-get install ripgrep batcat jq jc -y
+sudo apt-get install python3-pip pipx -y
+sudo apt-get -y install emacs screen neofetch
+sudo apt-get -y install fonts-jetbrains-mono
+
+
+## Install chocolately.
+
+choco install vscode
+choco install microsoft-windows-terminal
+choco install jetbrainsmono
+
+## guake for Microsoft Terminal
+
+Create a guake.bat file with this:
+```
+wt -w _quake
+```
+## homebrew post install
+
+echo >> /home/rseward/.bashrc
+echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/rseward/.bashrc
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
