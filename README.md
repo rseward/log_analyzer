@@ -102,6 +102,15 @@ python log_query.py 1759400000 --filter "error"
 # Filter by component
 python log_query.py 1759400000 --filter "component:alchemist"
 
+# NOT conditions (exclude messages) - three syntaxes available:
+python log_query.py 1759400000 --filter "not(error)"           # function syntax
+python log_query.py 1759400000 --filter "NOT warning"          # keyword syntax
+python log_query.py 1759400000 --filter "!debug"               # exclamation syntax
+
+# NOT with field-specific filters
+python log_query.py 1759400000 --filter "NOT component:reaper"  # exclude component
+python log_query.py 1759400000 --filter "not(component:debug_service)"  # function syntax
+
 # AND conditions (restrictive - must match ALL conditions)
 python log_query.py 1759400000 --filter "component:alchemist AND error"
 python log_query.py 1759400000 --filter "error AND warn"  # messages with both terms
@@ -113,6 +122,11 @@ python log_query.py 1759400000 --filter "component:forklift OR error"  # mixed c
 
 # Alternative OR syntax using ||
 python log_query.py 1759400000 --filter "error || warning"
+
+# NOT with AND/OR combinations
+python log_query.py 1759400000 --filter "error AND not(debug)"           # errors but not debug
+python log_query.py 1759400000 --filter "component:alchemist AND !info"   # alchemist non-info messages
+python log_query.py 1759400000 --filter "NOT warning OR error"            # exclude warnings OR show errors
 
 # Complex expressions (left-to-right evaluation)
 python log_query.py 1759400000 --filter "error AND component:alchemist OR warning"
@@ -156,11 +170,21 @@ The query tool supports flexible filtering with powerful AND/OR logic:
 - **Field-specific search**: `--filter "component:alchemist"` (searches specific field)
 - **Supported fields**: `component`, `message`, `timestamp`, `ts`
 
+#### **NOT Filters (Exclusion)**
+Three syntaxes available for excluding matching entries:
+- **Function syntax**: `--filter "not(error)"` (excludes entries containing "error")
+- **Keyword syntax**: `--filter "NOT warning"` (excludes entries containing "warning")
+- **Exclamation syntax**: `--filter "!debug"` (excludes entries containing "debug")
+- **Field-specific NOT**: `--filter "NOT component:reaper"` (excludes entries from reaper component)
+- **NOT with function**: `--filter "not(component:debug_service)"` (excludes debug_service component)
+
 #### **Logical Operators**
 - **AND conditions**: `--filter "component:alchemist AND error"`
 - **OR conditions**: `--filter "error OR warning"`
 - **Alternative OR syntax**: `--filter "error || warning"`
 - **Mixed conditions**: `--filter "component:forklift OR error"`
+- **NOT with AND**: `--filter "error AND not(debug)"` (errors that don't contain "debug")
+- **NOT with OR**: `--filter "NOT warning OR error"` (exclude warnings OR show errors)
 - **Complex expressions**: `--filter "error AND component:alchemist OR warning"`
 
 #### **Multiple Filter Options**
@@ -171,12 +195,15 @@ python log_query.py 1759400000 --filter "error AND component:alchemist"
 python log_query.py 1759400000 --filter "error" --filter "component:alchemist"
 ```
 
-#### **AND vs OR: Key Differences**
+#### **AND vs OR vs NOT: Key Differences**
 
 | Operator | Behavior | Example | Result |
 |----------|----------|---------|--------|
 | **AND** | **Restrictive** - entries must match ALL conditions | `"component:alchemist AND error"` | Only alchemist entries that also contain "error" |
 | **OR** | **Inclusive** - entries match ANY condition | `"component:alchemist OR error"` | All alchemist entries PLUS any entries containing "error" |
+| **NOT** | **Exclusive** - entries must NOT match condition | `"not(error)"` | All entries that do NOT contain "error" |
+| **NOT + AND** | **Restrictive exclusion** | `"component:alchemist AND not(debug)"` | Only alchemist entries that do NOT contain "debug" |
+| **NOT + OR** | **Inclusive exclusion** | `"NOT warning OR error"` | Exclude warnings OR show errors (mixed logic) |
 
 ```bash
 # AND Example (restrictive)
@@ -191,6 +218,19 @@ python log_query.py 1759400000 --filter "component:alchemist OR error"
 # ✅ alchemist component + info message
 # ✅ forklift component + error message
 # ❌ forklift component + info message
+
+# NOT Example (exclusion)
+python log_query.py 1759400000 --filter "not(debug)"
+# ✅ any component + error message
+# ✅ any component + info message
+# ❌ any component + debug message
+
+# NOT + AND Example (restrictive exclusion)
+python log_query.py 1759400000 --filter "component:alchemist AND not(debug)"
+# ✅ alchemist component + error message
+# ✅ alchemist component + info message
+# ❌ alchemist component + debug message
+# ❌ forklift component + any message
 ```
 
 ### Output Formats
@@ -233,6 +273,21 @@ python log_query.py 1759400000 --filter "component:forklift OR error" --limit 10
 
 # Complex filter: errors from alchemist OR any warning messages
 python log_query.py 1759400000 --filter "error AND component:alchemist OR warning"
+
+# Exclude debug messages to focus on important events
+python log_query.py 1759400000 --filter "not(debug)" --limit 20
+
+# Find errors but exclude known network warnings
+python log_query.py 1759400000 --filter "error AND not(network)" --range 300
+
+# Get alchemist messages but exclude info-level logs
+python log_query.py 1759400000 --filter "component:alchemist AND !info" --withtime
+
+# Find any errors OR warnings, but exclude debug entries
+python log_query.py 1759400000 --filter "(error OR warning) AND not(debug)" --limit 15
+
+# Exclude specific components from analysis
+python log_query.py 1759400000 --filter "NOT component:debug_service" --range 600
 
 # Get a clean view of just component and message for troubleshooting
 python log_query.py 1759400000 --fields "component,message" --range 300
@@ -313,6 +368,15 @@ python log_query.py 1759400000 --filter "component:alchemist OR component:forkli
 
 # Find specific component errors (restrictive search)
 python log_query.py 1759400000 --filter "component:alchemist AND error" --withtime
+
+# Exclude debug noise to focus on important messages
+python log_query.py 1759400000 --filter "not(debug)" --limit 25
+
+# Find errors but exclude known issues
+python log_query.py 1759400000 --filter "error AND NOT timeout" --range 300
+
+# Get messages from production components only (exclude test/debug services)
+python log_query.py 1759400000 --filter "NOT component:test_service AND !debug" --limit 20
 
 # Get a clean overview around a specific time
 python log_query.py 1759400000 --fields "timestamp,component,message" --range 300

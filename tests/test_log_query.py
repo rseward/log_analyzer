@@ -72,7 +72,7 @@ class TestFilterExpressionParsing:
         result = log_query.parse_filter_expression("error")
         expected = {
             "conditions": [
-                {"type": "general", "value": "error", "operator": None}
+                {"type": "general", "value": "error", "negated": False, "operator": None}
             ]
         }
         assert result == expected
@@ -82,7 +82,7 @@ class TestFilterExpressionParsing:
         result = log_query.parse_filter_expression("component:reaper")
         expected = {
             "conditions": [
-                {"type": "field", "field": "component", "value": "reaper", "operator": None}
+                {"type": "field", "field": "component", "value": "reaper", "negated": False, "operator": None}
             ]
         }
         assert result == expected
@@ -147,6 +147,126 @@ class TestFilterExpressionParsing:
         assert result["conditions"][2]["value"] == "warning"
 
 
+class TestNotFunctionality:
+    """Test cases for NOT functionality in filters"""
+    
+    def test_parse_not_function_pattern(self):
+        """Test parsing not(value) pattern"""
+        result = log_query.parse_filter_expression("not(error)")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["value"] == "error"
+        assert result["conditions"][0]["negated"] is True
+        assert result["conditions"][0]["type"] == "general"
+    
+    def test_parse_not_keyword_pattern(self):
+        """Test parsing NOT value pattern"""
+        result = log_query.parse_filter_expression("NOT warning")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["value"] == "warning"
+        assert result["conditions"][0]["negated"] is True
+        assert result["conditions"][0]["type"] == "general"
+    
+    def test_parse_exclamation_pattern(self):
+        """Test parsing !value pattern"""
+        result = log_query.parse_filter_expression("!debug")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["value"] == "debug"
+        assert result["conditions"][0]["negated"]  is True
+        assert result["conditions"][0]["type"] == "general"
+    
+    def test_parse_not_field_specific(self):
+        """Test parsing NOT with field-specific filter"""
+        result = log_query.parse_filter_expression("NOT component:reaper")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["type"] == "field"
+        assert result["conditions"][0]["field"] == "component"
+        assert result["conditions"][0]["value"] == "reaper"
+        assert result["conditions"][0]["negated"]  is True
+    
+    def test_parse_not_function_field_specific(self):
+        """Test parsing not() with field-specific filter"""
+        result = log_query.parse_filter_expression("not(component:database)")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["type"] == "field"
+        assert result["conditions"][0]["field"] == "component"
+        assert result["conditions"][0]["value"] == "database"
+        assert result["conditions"][0]["negated"]  is True
+    
+    def test_parse_regular_condition_not_negated(self):
+        """Test that regular conditions are not negated"""
+        result = log_query.parse_filter_expression("error")
+        assert len(result["conditions"]) == 1
+        assert result["conditions"][0]["value"] == "error"
+        assert result["conditions"][0]["negated"]  is False
+    
+    def test_parse_combined_not_and_regular(self):
+        """Test combinations of NOT with regular conditions"""
+        result = log_query.parse_filter_expression("error AND not(debug)")
+        assert len(result["conditions"]) == 2
+        assert result["conditions"][0]["value"] == "error"
+        assert result["conditions"][0]["negated"]  is False
+        assert result["conditions"][1]["value"] == "debug"
+        assert result["conditions"][1]["negated"]  is True
+    
+    def test_parse_combined_not_or_regular(self):
+        """Test NOT with OR operations"""
+        result = log_query.parse_filter_expression("NOT warning OR error")
+        assert len(result["conditions"]) == 2
+        assert result["conditions"][0]["value"] == "warning"
+        assert result["conditions"][0]["negated"]  is True
+        assert result["conditions"][1]["value"] == "error"
+        assert result["conditions"][1]["negated"]  is False
+    
+    def test_sql_generation_not_general(self):
+        """Test SQL generation for general NOT conditions"""
+        filters = {"conditions": [{"type": "general", "value": "error", "negated": True, "operator": None}]}
+        query, params = log_query.build_sql_query(1000, 2000, filters, ["message"], None)
+        
+        assert "message NOT LIKE ?" in query
+        assert "%error%" in params
+    
+    def test_sql_generation_not_field_specific(self):
+        """Test SQL generation for field-specific NOT conditions"""
+        filters = {"conditions": [{"type": "field", "field": "component", "value": "reaper", "negated": True, "operator": None}]}
+        query, params = log_query.build_sql_query(1000, 2000, filters, ["message"], None)
+        
+        assert "component NOT LIKE ?" in query
+        assert "%reaper%" in params
+    
+    def test_sql_generation_regular_vs_not(self):
+        """Test SQL generation difference between regular and NOT conditions"""
+        # Regular condition
+        filters_regular = {"conditions": [{"type": "general", "value": "warning", "negated": False, "operator": None}]}
+        query_regular, params_regular = log_query.build_sql_query(1000, 2000, filters_regular, ["message"], None)
+        
+        # NOT condition
+        filters_not = {"conditions": [{"type": "general", "value": "warning", "negated": True, "operator": None}]}
+        query_not, params_not = log_query.build_sql_query(1000, 2000, filters_not, ["message"], None)
+        
+        assert "message LIKE ?" in query_regular
+        assert "NOT LIKE" not in query_regular
+        assert "message NOT LIKE ?" in query_not
+        assert "%warning%" in params_regular
+        assert "%warning%" in params_not
+    
+    def test_sql_generation_not_timestamp_field(self):
+        """Test SQL generation for NOT with timestamp field (should use != instead of NOT LIKE)"""
+        filters = {"conditions": [{"type": "field", "field": "ts", "value": "1500", "negated": True, "operator": None}]}
+        query, params = log_query.build_sql_query(1000, 2000, filters, ["message"], None)
+        
+        assert "ts != ?" in query
+        assert 1500 in params
+    
+    def test_sql_generation_regular_timestamp_field(self):
+        """Test SQL generation for regular timestamp field (should use = not !=)"""
+        filters = {"conditions": [{"type": "field", "field": "ts", "value": "1500", "negated": False, "operator": None}]}
+        query, params = log_query.build_sql_query(1000, 2000, filters, ["message"], None)
+        
+        assert "ts = ?" in query
+        assert "!=" not in query
+        assert 1500 in params
+
+
 class TestSQLQueryBuilding:
     """Test cases for build_sql_query function"""
     
@@ -166,7 +286,7 @@ class TestSQLQueryBuilding:
         """Test building query with filters"""
         filters = {
             "conditions": [
-                {"type": "general", "value": "error", "operator": None}
+                {"type": "general", "value": "error", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -180,7 +300,7 @@ class TestSQLQueryBuilding:
         """Test building query with field-specific filter"""
         filters = {
             "conditions": [
-                {"type": "field", "field": "component", "value": "reaper", "operator": None}
+                {"type": "field", "field": "component", "value": "reaper", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -202,8 +322,8 @@ class TestSQLQueryBuilding:
         """Test building SQL query with OR conditions"""
         filters = {
             "conditions": [
-                {"type": "general", "value": "error", "operator": "OR"},
-                {"type": "general", "value": "warning", "operator": None}
+                {"type": "general", "value": "error", "negated": False, "operator": "OR"},
+                {"type": "general", "value": "warning", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -217,8 +337,8 @@ class TestSQLQueryBuilding:
         """Test building SQL query with OR field-specific conditions"""
         filters = {
             "conditions": [
-                {"type": "field", "field": "component", "value": "alchemist", "operator": "OR"},
-                {"type": "field", "field": "component", "value": "forklift", "operator": None}
+                {"type": "field", "field": "component", "value": "alchemist", "negated": False, "operator": "OR"},
+                {"type": "field", "field": "component", "value": "forklift", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -232,8 +352,8 @@ class TestSQLQueryBuilding:
         """Test building SQL query with mixed OR conditions (field + general)"""
         filters = {
             "conditions": [
-                {"type": "field", "field": "component", "value": "alchemist", "operator": "OR"},
-                {"type": "general", "value": "error", "operator": None}
+                {"type": "field", "field": "component", "value": "alchemist", "negated": False, "operator": "OR"},
+                {"type": "general", "value": "error", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -247,9 +367,9 @@ class TestSQLQueryBuilding:
         """Test building SQL query with complex AND/OR conditions"""
         filters = {
             "conditions": [
-                {"type": "general", "value": "error", "operator": "AND"},
-                {"type": "field", "field": "component", "value": "alchemist", "operator": "OR"},
-                {"type": "general", "value": "warning", "operator": None}
+                {"type": "general", "value": "error", "negated": False, "operator": "AND"},
+                {"type": "field", "field": "component", "value": "alchemist", "negated": False, "operator": "OR"},
+                {"type": "general", "value": "warning", "negated": False, "operator": None}
             ]
         }
         query, params = log_query.build_sql_query(
@@ -640,6 +760,121 @@ class TestCLIIntegration:
             assert "Test error message" in or_result.output   # matches both conditions
             assert "Test message 1" in or_result.output       # test_component
             assert "Warning message" in or_result.output      # test_component
+        finally:
+            self.tearDown_test_database()
+    
+    def test_cli_with_not_function_filter(self):
+        """Test CLI with not() function filter"""
+        db_path = self.setUp_test_database()
+        
+        try:
+            runner = CliRunner()
+            result = runner.invoke(log_query.main, [
+                '--database', db_path,
+                '1697395537',
+                '--range', '5',
+                '--filter', 'not(error)'
+            ])
+            
+            assert result.exit_code == 0
+            # Should NOT contain error messages
+            assert "Test error message" not in result.output
+            # Should contain other messages
+            assert "Test message 1" in result.output
+            assert "Other message" in result.output
+        finally:
+            self.tearDown_test_database()
+    
+    def test_cli_with_not_keyword_filter(self):
+        """Test CLI with NOT keyword filter"""
+        db_path = self.setUp_test_database()
+        
+        try:
+            runner = CliRunner()
+            result = runner.invoke(log_query.main, [
+                '--database', db_path,
+                '1697395537',
+                '--range', '5',
+                '--filter', 'NOT info'
+            ])
+            
+            assert result.exit_code == 0
+            # Should NOT contain info messages
+            assert "Test message 1" not in result.output
+            assert "Other message" not in result.output
+            assert "Processing data" not in result.output
+            # Should contain error and warning messages
+            assert "Test error message" in result.output
+            assert "Warning message" in result.output
+        finally:
+            self.tearDown_test_database()
+    
+    def test_cli_with_exclamation_filter(self):
+        """Test CLI with ! filter"""
+        db_path = self.setUp_test_database()
+        
+        try:
+            runner = CliRunner()
+            result = runner.invoke(log_query.main, [
+                '--database', db_path,
+                '1697395537',
+                '--range', '5',
+                '--filter', '!warn'
+            ])
+            
+            assert result.exit_code == 0
+            # Should NOT contain warning messages
+            assert "Connection warning" not in result.output
+            assert "Warning message" not in result.output
+            # Should contain other messages
+            assert "Test error message" in result.output
+            assert "Test message 1" in result.output
+        finally:
+            self.tearDown_test_database()
+    
+    def test_cli_with_not_component_filter(self):
+        """Test CLI with NOT component filter"""
+        db_path = self.setUp_test_database()
+        
+        try:
+            runner = CliRunner()
+            result = runner.invoke(log_query.main, [
+                '--database', db_path,
+                '1697395537',
+                '--range', '5',
+                '--filter', 'NOT component:test_component'
+            ])
+            
+            assert result.exit_code == 0
+            # Should NOT contain test_component messages
+            assert "Test message 1" not in result.output
+            assert "Test error message" not in result.output
+            assert "Warning message" not in result.output
+            # Should contain other component messages
+            assert "Other message" in result.output
+        finally:
+            self.tearDown_test_database()
+    
+    def test_cli_with_mixed_not_and_regular_filters(self):
+        """Test CLI with mixed NOT and regular filters"""
+        db_path = self.setUp_test_database()
+        
+        try:
+            runner = CliRunner()
+            result = runner.invoke(log_query.main, [
+                '--database', db_path,
+                '1697395537',
+                '--range', '5',
+                '--filter', 'component:test_component AND not(error)'
+            ])
+            
+            assert result.exit_code == 0
+            # Should contain test_component messages but NOT error messages
+            assert "Test message 1" in result.output       # test_component, no error
+            assert "Warning message" in result.output      # test_component, no error
+            assert "Test error message" not in result.output  # test_component but has error
+            # Should not contain non-test_component messages
+            assert "Other message" not in result.output
         finally:
             self.tearDown_test_database()
 

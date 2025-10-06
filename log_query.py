@@ -10,7 +10,7 @@ import sqlite3
 import re
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
 import click
@@ -64,6 +64,7 @@ def parse_filter_expression(filter_expr: str) -> Dict[str, Any]:
     - Simple string matching: "error"
     - Field-specific matching: "component:reaper"
     - AND/OR operations: "error AND component:reaper"
+    - NOT operations: "not(error)", "NOT error", "!error"
     - Parentheses for grouping: "(error OR warning) AND component:reaper"
     
     Args:
@@ -93,20 +94,37 @@ def parse_filter_expression(filter_expr: str) -> Dict[str, Any]:
                 operator = "AND" if operator == "&&" else "OR"
         
         # Parse individual condition
-        if ":" in condition:
+        negated = False
+        
+        # Check for NOT patterns
+        condition_clean = condition.strip()
+        
+        # Handle not(value) pattern
+        not_func_match = re.match(r'^not\s*\((.+)\)$', condition_clean, re.IGNORECASE)
+        if not_func_match:
+            negated = True
+            condition_clean = not_func_match.group(1).strip()
+        # Handle NOT value or !value patterns
+        elif re.match(r'^(NOT|!)\s*', condition_clean, re.IGNORECASE):
+            negated = True
+            condition_clean = re.sub(r'^(NOT|!)\s*', '', condition_clean, flags=re.IGNORECASE).strip()
+        
+        if ":" in condition_clean:
             # Field-specific condition like "component:reaper"
-            field, value = condition.split(":", 1)
+            field, value = condition_clean.split(":", 1)
             conditions.append({
                 "type": "field",
                 "field": field.strip(),
                 "value": value.strip(),
+                "negated": negated,
                 "operator": operator if i + 2 < len(parts) else None
             })
         else:
             # General string matching
             conditions.append({
                 "type": "general",
-                "value": condition.strip(),
+                "value": condition_clean,
+                "negated": negated,
                 "operator": operator if i + 2 < len(parts) else None
             })
         
@@ -149,28 +167,32 @@ def build_sql_query(
         
         for i, condition in enumerate(filters["conditions"]):
             # Build the SQL condition for this filter
+            negated = condition.get("negated", False)
+            not_operator = "NOT " if negated else ""
+            
             if condition["type"] == "field":
                 field = condition["field"]
                 value = condition["value"]
                 
                 if field in ["component", "message", "timestamp"]:
-                    current_filter_sql.append(f"{field} LIKE ?")
+                    current_filter_sql.append(f"{field} {not_operator}LIKE ?")
                     params.append(f"%{value}%")
                 elif field == "ts":
                     try:
                         ts_value = int(value)
-                        current_filter_sql.append(f"ts = ?")
+                        equality_op = "!=" if negated else "="
+                        current_filter_sql.append(f"ts {equality_op} ?")
                         params.append(ts_value)
                     except ValueError:
                         # Skip invalid ts values
                         continue
                 else:
                     # Unknown field, search in message
-                    current_filter_sql.append("message LIKE ?")
+                    current_filter_sql.append(f"message {not_operator}LIKE ?")
                     params.append(f"%{value}%")
             else:
                 # General search in message
-                current_filter_sql.append("message LIKE ?")
+                current_filter_sql.append(f"message {not_operator}LIKE ?")
                 params.append(f"%{condition['value']}%")
             
             # Check if there's a next condition and what operator to use
@@ -271,7 +293,8 @@ def get_available_fields(db_path: str) -> List[str]:
     "--filter", "-f", "filters",
     multiple=True,
     help="Filter expressions (can be used multiple times). "
-         "Examples: 'error', 'component:reaper', 'error AND component:reaper', 'error OR warning'"
+         "Examples: 'error', 'component:reaper', 'error AND component:reaper', 'error OR warning', "
+         "'not(error)', 'NOT warning', '!debug'"
 )
 @click.option(
     "--withtime",
@@ -312,6 +335,12 @@ def main(timestamp, database, range, filters, withtime, fields, limit, show_fiel
       
       # Query with filters
       log_query.py 1697395536 --filter "error" --filter "component:reaper"
+      
+      # Query with NOT filters (exclude messages containing 'debug')
+      log_query.py 1697395536 --filter "not(debug)" --filter "error"
+      
+      # Query excluding specific component
+      log_query.py 1697395536 --filter "NOT component:reaper"
       
       # Custom output fields
       log_query.py 1697395536 --fields "component,message"

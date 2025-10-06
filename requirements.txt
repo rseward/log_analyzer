@@ -1,3 +1,4 @@
 # Main dependencies for log_analyzer.py
 click>=8.0.0
 tqdm>=4.64.0
+litecli

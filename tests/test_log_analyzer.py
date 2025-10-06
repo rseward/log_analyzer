@@ -9,8 +9,6 @@ import tempfile
 import os
 import shutil
 from datetime import datetime, date
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 # Import the module under test
 import sys

@@ -10,7 +10,7 @@ import sqlite3
 import re
 import os
 import glob
-from datetime import datetime, date, time
+from datetime import datetime, time
 from pathlib import Path
 
 import click

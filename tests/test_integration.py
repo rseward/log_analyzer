@@ -110,7 +110,6 @@ class TestRealWorldScenarios:
             # Create a larger test log file
             large_log = os.path.join(temp_dir, "large_service.log")
             with open(large_log, 'w') as f:
-                base_time = "10:00:00"
                 for i in range(1000):  # 1000 log entries
                     minutes = i // 60
                     seconds = i % 60
@@ -120,7 +119,7 @@ class TestRealWorldScenarios:
                     # Add some multi-line entries
                     if i % 100 == 0:
                         f.write(f"Additional details for entry {i}\n")
-                        f.write(f"More context information\n")
+                        f.write("More context information\n")
             
             # Process the large file
             db_path = os.path.join(temp_dir, "large_test.db")
